@@ -41,15 +41,21 @@ const (
 	maxJSONBody     = 1 << 20   // 1 MiB（部署层的 client_max_body_size 是另一道）
 )
 
-// setupApi 挂通用 API（Setup 的第四步）。
+// setupApi 挂 /api（Setup 的第四步）: 通用节点 CRUD + 认证。
 func (s *Site) setupApi() {
 	s.router.Group("/api", func(g *cho.Cho[*CmsCtx]) {
-		g.Get("/nodes/{type}", s.apiList)
-		g.Post("/nodes/{type}", s.apiCreate)
-		g.Get("/nodes/{type}/{id}", s.apiView)
-		g.Put("/nodes/{type}/{id}", s.apiUpdate)
-		g.Delete("/nodes/{type}/{id}", s.apiDelete)
+		s.mountNodes(g)
+		s.setupAuth(g)
 	})
+}
+
+// mountNodes 通用节点 CRUD。
+func (s *Site) mountNodes(g *cho.Cho[*CmsCtx]) {
+	g.Get("/nodes/{type}", s.apiList)
+	g.Post("/nodes/{type}", s.apiCreate)
+	g.Get("/nodes/{type}/{id}", s.apiView)
+	g.Put("/nodes/{type}/{id}", s.apiUpdate)
+	g.Delete("/nodes/{type}/{id}", s.apiDelete)
 }
 
 // apiList GET /api/nodes/{type}

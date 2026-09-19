@@ -44,6 +44,9 @@ func newPolicySite(t *testing.T) *Site {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = site.Close() })
+	// 认证渠道: 各测试用 CreateSession(realm="frontend") 造身份 ⇒ 得先声明出来
+	//（未声明的渠道会被 Actor() 拒掉 —— 这条本身也有测试）。
+	site.Auth().Register(AuthRealm{Name: "frontend", NodeType: "member", Default: true})
 	return site
 }
 

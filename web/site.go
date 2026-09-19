@@ -43,6 +43,10 @@ type Site struct {
 	types   *types.Types
 	engine  core.Engine
 	router  *cho.Cho[*CmsCtx]
+	auth    *AuthRegistry
+
+	// secureCookies 认证 cookie 是否只走 HTTPS（生产必须开; 配置期设置）。
+	secureCookies bool
 
 	// 每个类型一份授权策略（site.Type("article").OnRead(...) 注册; Setup 前冻结）。
 	policies map[string]*TypePolicy
@@ -80,7 +84,9 @@ func Open(basedir string) (*Site, error) {
 	}
 	// web 事件在**配置期之前**定义好 —— 于是 Hook 注册没有"事件还不存在"的时序问题。
 	defineWebHooks(engine)
+	defineAuthHooks(engine)
 	site := &Site{basedir: basedir, db: db, types: ts, engine: engine}
+	site.auth = newAuthRegistry(site)
 	site.router = cho.New(site.CmsCtxMaker) // 空 router: 路由留到 Setup
 	site.alive.Store(true)
 	return site, nil
@@ -107,6 +113,13 @@ func (s *Site) Close() error {
 
 // Router 底层路由器（站点/插件在配置期挂自己的中间件与路由; 也是 chi 的逃生舱）。
 func (s *Site) Router() *cho.Cho[*CmsCtx] { return s.router }
+
+// Auth 渠道注册表（配置期: site.Auth().Register(AuthRealm{…})）。
+func (s *Site) Auth() *AuthRegistry { return s.auth }
+
+// SecureCookies 认证 cookie 是否只走 HTTPS。默认 false（本地 http 开发能跑）——
+// 上线必须打开, 否则会话令牌会在明文链路上裸奔。
+func (s *Site) SecureCookies(on bool) { s.secureCookies = on }
 
 // DB 底层句柄（逃生舱）。
 func (s *Site) DB() *dba.SQL { return s.db }

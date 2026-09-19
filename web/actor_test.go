@@ -36,6 +36,7 @@ func newAuthSite(t *testing.T) *Site {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = site.Close() })
+	site.Auth().Register(AuthRealm{Name: "frontend", NodeType: "member", Default: true})
 	return site
 }
 

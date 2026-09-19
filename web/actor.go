@@ -75,9 +75,12 @@ func (c *CmsCtx) Actor() Actor {
 	if err != nil || node == nil {
 		return c.actor
 	}
-	// TODO(等 AuthRealm 注册表): 这里要核 session.Realm 是站点配过的、且
-	// realm.NodeType == node.Type（v2 就是那么做的）。现在会话只能由站点自己
-	// CreateSession 建, 所以先不核。
+	// 会话的渠道必须是注册过的, 且渠道认的类型与节点类型一致 —— 否则这条会话是
+	// 别的东西塞进来的（比如手里有库的人自己 INSERT 了一行 sessions）。
+	realm, ok := c.site.auth.realm(session.Realm)
+	if !ok || realm.NodeType != node.Type {
+		return c.actor
+	}
 	c.principal = node
 	c.principalLoaded = true
 	c.actor = withBaseRoles(Actor{
