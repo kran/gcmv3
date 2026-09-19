@@ -25,6 +25,9 @@ type CmsCtx struct {
 	actorLoaded     bool
 	principal       *core.Node
 	principalLoaded bool
+
+	// 读规则求值结果（每类型一次; 换身份时作废）。
+	readRules map[string]readRuleResult
 }
 
 // CmsCtxMaker cho 的上下文工厂（Start 建 router 时用）。

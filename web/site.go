@@ -36,6 +36,9 @@ type Site struct {
 	db      *dba.SQL
 	types   *types.Types
 	engine  core.Engine
+
+	// 每个类型一份授权策略（site.Type("article").OnRead(...) 注册）。
+	policies map[string]*TypePolicy
 }
 
 // Open 开站点: 开库（档位在这里拼死）→ 建引擎的基础表 → 载类型 → 起引擎。

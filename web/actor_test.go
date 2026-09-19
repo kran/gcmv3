@@ -65,8 +65,9 @@ func TestActorAnonymous(t *testing.T) {
 	if !actor.IsAnonymous() || actor.NodeID != 0 {
 		t.Fatalf("该是匿名: %#v", actor)
 	}
-	if len(actor.Roles) != 0 {
-		t.Fatalf("匿名没有角色: %#v", actor.Roles)
+	// 匿名也有基础角色 public（"人人都有"）—— 授权词汇需要一个键来表达"对匿名…"
+	if strings.Join(actor.Roles, ",") != "public" {
+		t.Fatalf("匿名的角色 = %#v, want [public]", actor.Roles)
 	}
 	if _, err := cms.Principal(); !errors.Is(err, ErrNoPrincipal) {
 		t.Fatalf("err = %v", err)
@@ -233,17 +234,18 @@ func TestSetActor(t *testing.T) {
 	cms.SetActor(Actor{NodeID: 7})
 }
 
-// 角色取值容错: roles 字段可能是 []any（JSON）或 []string。
+// 角色词表取值容错: roles 字段可能是 []any（JSON）或 []string。
 func TestRolesOfForms(t *testing.T) {
 	cases := []struct {
 		name  string
 		value any
-		want  []string
+		want  string
 	}{
-		{"json 数组", []any{"owner", "editor"}, []string{"member", "owner", "editor"}},
-		{"字符串切片", []string{"admin"}, []string{"member", "admin"}},
-		{"混入非字符串", []any{"owner", 7, ""}, []string{"member", "owner"}},
-		{"缺失", nil, []string{"member"}},
+		{"json 数组", []any{"owner", "editor"}, "owner,editor"},
+		{"字符串切片", []string{"admin"}, "admin"},
+		{"混入非字符串", []any{"owner", 7, ""}, "owner"},
+		{"单个字符串", "owner", "owner"},
+		{"缺失", nil, ""},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -251,9 +253,30 @@ func TestRolesOfForms(t *testing.T) {
 			if test.value != nil {
 				node.Fields[types.RolesField] = test.value
 			}
-			got := rolesOf(node)
-			if strings.Join(got, ",") != strings.Join(test.want, ",") {
-				t.Fatalf("roles = %#v, want %#v", got, test.want)
+			got := strings.Join(rolesOf(node), ",")
+			if got != test.want {
+				t.Fatalf("roles = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+// 基础角色: public 与类型名在前, 业务角色在后; 重复的不重复出现。
+func TestWithBaseRoles(t *testing.T) {
+	cases := []struct {
+		name  string
+		actor Actor
+		want  string
+	}{
+		{"匿名", Actor{}, "public"},
+		{"节点身份", Actor{NodeType: "member", Roles: []string{"editor"}}, "public,member,editor"},
+		{"类型名已在业务角色里", Actor{NodeType: "member", Roles: []string{"member"}}, "public,member"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got := strings.Join(withBaseRoles(test.actor).Roles, ",")
+			if got != test.want {
+				t.Fatalf("roles = %q, want %q", got, test.want)
 			}
 		})
 	}

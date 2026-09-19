@@ -25,20 +25,28 @@ type Actor struct {
 	NodeID   int64  `json:"node_id,omitempty"`
 	NodeType string `json:"node_type,omitempty"` // 已认证节点的类型
 	Realm    string `json:"realm,omitempty"`     // 会话绑定的 realm（不透明字符串）
-	// Roles 词的**来源有两处**（这一版先这样）:
+	// Roles 词的**来源有三处**（这一版先这样）:
 	//
-	//	节点的类型名   —— "是不是会员"就是类型本身（member / staff …）
+	//	public       —— 人人都有（含匿名）: "对匿名隐藏电话"这类规则需要一个键
+	//	节点的类型名  —— "是不是会员"就是类型本身（member / staff …）
 	//	节点 roles 字段 —— 能力注入的那个多选字段（owner / admin / 站点自定义词表）
 	//
-	// 说实话"角色"这个概念内涵有点杂（身份类型与权限词表混在一起）; 为了简单先这样。
+	// 说实话"角色"这个概念内涵有点杂（"人人有"、"身份类型"、"权限词表"混在一起）;
+	// 为了简单先这样 —— 求值只认"actor 的角色里有没有它"。
 	Roles []string `json:"roles,omitempty"`
 }
 
 // IsAnonymous 没有身份。
 func (a Actor) IsAnonymous() bool { return a.NodeID == 0 }
 
-// HasRole 是否持有某角色（包含类型名那一份）。
+// HasRole 是否持有某角色（含基础角色 public 与类型名那一份）。
 func (a Actor) HasRole(name string) bool { return slices.Contains(a.Roles, name) }
+
+// IsOwner 持有内核保留的 owner 角色 —— 写侧 owner 默认被授予全部字段。
+//
+// 没有 HasAdminAccess 之类的合并判断: admin 只是"能进后台"的标识, 不是对节点操作的
+// 角色。"谁是管理角色"是**站点策略**（站点自己组合 owner / admin / 业务角色）。
+func (a Actor) IsOwner() bool { return a.HasRole(types.RoleOwner) }
 
 // ErrNoPrincipal 当前身份没有对应的节点（匿名）。
 var ErrNoPrincipal = errors.New("web: actor has no node principal")
@@ -53,7 +61,7 @@ func (c *CmsCtx) Actor() Actor {
 		return c.actor
 	}
 	c.actorLoaded = true
-	c.actor = Actor{}
+	c.actor = withBaseRoles(Actor{})
 
 	token := c.authToken()
 	if token == "" {
@@ -72,12 +80,12 @@ func (c *CmsCtx) Actor() Actor {
 	// CreateSession 建, 所以先不核。
 	c.principal = node
 	c.principalLoaded = true
-	c.actor = Actor{
+	c.actor = withBaseRoles(Actor{
 		NodeID:   node.ID,
 		NodeType: node.Type,
 		Realm:    session.Realm,
 		Roles:    rolesOf(node),
-	}
+	})
 	return c.actor
 }
 
@@ -87,13 +95,11 @@ func (c *CmsCtx) SetActor(actor Actor) {
 	if !actor.IsAnonymous() && (actor.NodeType == "" || actor.Realm == "") {
 		panic("web: incomplete node actor (node_type / realm required)")
 	}
-	if actor.IsAnonymous() {
-		actor = Actor{}
-	}
-	c.actor = actor
+	c.actor = withBaseRoles(actor)
 	c.actorLoaded = true
 	c.principal = nil
 	c.principalLoaded = false
+	c.readRules = nil // 换身份 ⇒ 读规则（范围 + 掩码字段）作废
 }
 
 // Principal 身份背后的节点（匿名 ⇒ ErrNoPrincipal）。
@@ -139,18 +145,36 @@ func (c *CmsCtx) authToken() string {
 	return cookie.Value
 }
 
-// rolesOf 节点的角色: **类型名 + roles 字段的词表值**。
+// withBaseRoles 补基础角色: public（人人都有, 含匿名）+ 节点的类型名。
 //
-// roles 是能力注入的多选字段, 值在 fields JSON 里（字符串数组）; 用 cast 思路容错
-// 取值而不是裸断言 —— 字段形态可能变（[]any / []string）。
+// 去重保序 —— 调用方传进来的 Roles 里可能已经有它们（测试与插件直接 SetActor 时）。
+func withBaseRoles(actor Actor) Actor {
+	roles := make([]string, 0, len(actor.Roles)+2)
+	seen := make(map[string]bool, len(actor.Roles)+2)
+	add := func(role string) {
+		if role == "" || seen[role] {
+			return
+		}
+		seen[role] = true
+		roles = append(roles, role)
+	}
+	add(types.RolePublic)
+	add(actor.NodeType)
+	for _, role := range actor.Roles {
+		add(role)
+	}
+	actor.Roles = roles
+	return actor
+}
+
+// rolesOf 节点 roles 字段里的**业务角色**（能力注入的多选字段, 值在 fields JSON 里）。
+//
+// 用 cast 思路容错取值而不是裸断言 —— 字段形态可能变（[]any / []string / 单个字符串）。
 func rolesOf(node *core.Node) []string {
 	if node == nil {
 		return nil
 	}
-	roles := make([]string, 0, 4)
-	if node.Type != "" {
-		roles = append(roles, node.Type)
-	}
+	var roles []string
 	switch list := node.Fields[types.RolesField].(type) {
 	case []any:
 		for _, value := range list {
