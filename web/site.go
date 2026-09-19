@@ -48,8 +48,6 @@ type Site struct {
 	loginLimiter *limiter
 	// uploadLimit 单文件上传上限（配置期可调; <=0 关闭上传）。
 	uploadLimit int64
-	// uploadRule 全站上传规则（零值 = 框架默认; 见 upload.go）。
-	uploadRule UploadRule
 
 	// secureCookies 认证 cookie 是否只走 HTTPS（生产必须开; 配置期设置）。
 	secureCookies bool

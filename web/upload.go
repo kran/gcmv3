@@ -6,8 +6,8 @@
 // 六条规矩:
 //
 //	① **必须登录** —— 框架的底线（匿名上传是不可接受的滥用面）。要公开上传请自己挂端点
-//	② 全站一条**上传规则**（site.Upload）声明: 登录之后还要满足什么业务条件、能传什么、
-//	   多大、落哪。不注册 = 默认（任何已登录身份 + 框架白名单 + 站点上限 + 年月目录）
+//	② 上传策略是一个**事件**（HookUpload）: 站点/插件声明"登录之后还要满足什么业务条件、
+//	   能传什么、多大、落哪"。没有 handler = 默认（任何已登录身份 + 全白名单 + 站点上限 + 年月目录）
 //	③ 扩展名白名单 + **内容嗅探必须与扩展名相符**（`.png` 里装 HTML 进不来）
 //	④ **不保留客户端文件名** —— 名字自己生成。于是没有路径穿越、没有编码陷阱、
 //	   也没有"文件名里带着上传者真名"的隐私泄漏; 展示名该存在节点字段里
@@ -83,68 +83,95 @@ type Upload struct {
 	Mime string // 嗅探出来的真实内容类型
 }
 
-// UploadRule 全站一条的上传规则。
+// UploadAllow 上传策略的"允许范围"。**只能收窄**: 每个方法都只让范围更小或不变。
 //
-// 上传**不是节点操作**（文件先上来、才可能被节点引用; 同一张图可能被多个节点用）,
-// 所以它不挂在类型上 —— 全站一条, 与四动词模型并列存在。
+// 为什么要这条: 上传策略是事件, 可以有多个 handler（站点一个、插件一个）。谁也不许
+// 放宽别人定下的限制, 否则"谁先跑"就成了权限问题。
 //
-// 返回 error = 拒绝（返回 *Error 指定状态码; 别的 error 算服务端错误）。
-// 通过时用 allow 声明"允许什么"; 不声明 = 框架默认（全白名单 + 站点上限 + 年月目录）。
-//
-// **登录是框架的底线**, 规则不必再判"有没有登录" —— 它管的是"登录之后还要满足什么"
-// （例如"资料审核通过的会员才行"）。
-type UploadRule func(c *CmsCtx, up Upload, allow *UploadAllow) error
-
-// UploadAllow 规则通过时声明允许什么。零值 = 框架默认。
+// 零值 = 框架默认（全白名单 + 站点上限 + 年月目录）。
 type UploadAllow struct {
-	extensions []string
-	maxBytes   int64
+	extensions map[string]bool // nil = 还没被收窄（= 全白名单）
+	maxBytes   int64           // 0 = 还没被收窄（= 站点硬顶）
 	dir        string
+	dirSet     bool
+	conflict   string // 两个 handler 打架 / 目录越界 ⇒ 配置错
 }
 
-// Extensions 允许的扩展名（"png" 与 ".png" 都收）。必须是框架白名单的**子集** ——
-// 想放 `.svg` 进来会在求值时被拒（白名单是安全边界, 不能被规则放宽）。
+// Extensions 把允许的扩展名收窄到这些（"png" 与 ".png" 都收, 大小写不敏感）。
+//
+// 必须在框架白名单内 —— 想放 `.svg` 进来是配置错（白名单是安全边界, 事件也不能放宽）。
+// 多个 handler 各调用一次 ⇒ 取**交集**（谁都不许把别人去掉的加回来）。
 func (a *UploadAllow) Extensions(exts ...string) {
+	want := map[string]bool{}
 	for _, ext := range exts {
-		ext = strings.ToLower(strings.TrimSpace(ext))
-		if ext == "" {
-			continue
+		normalized := normalizeExt(ext)
+		if normalized != "" {
+			want[normalized] = true
 		}
-		if !strings.HasPrefix(ext, ".") {
-			ext = "." + ext
+	}
+	if a.extensions == nil {
+		a.extensions = want
+		return
+	}
+	for ext := range a.extensions {
+		if !want[ext] {
+			delete(a.extensions, ext)
 		}
-		a.extensions = append(a.extensions, ext)
 	}
 }
 
-// MaxBytes 单文件上限。站点 UploadLimit 是**硬顶**, 这里设更大的值没有意义（会被夹到硬顶）。
-func (a *UploadAllow) MaxBytes(n int64) { a.maxBytes = n }
+// MaxBytes 把单文件上限收窄到 n（**只降不升**: 站点 UploadLimit 是硬顶, 别人定下的
+// 更小值也不会被这个方法放大）。
+func (a *UploadAllow) MaxBytes(n int64) {
+	if n <= 0 {
+		return
+	}
+	if a.maxBytes == 0 || n < a.maxBytes {
+		a.maxBytes = n
+	}
+}
 
 // Dir 落盘的子目录（相对 uploads/）, 例如 "member/123"、"avatars"。
 //
 // 空 = 按年月（"2026/09"）。用它可以按上传者/用途分目录 —— 孤儿文件回收与用量统计
 // 都靠路径里的信息, 不用额外一张表。
-func (a *UploadAllow) Dir(dir string) { a.dir = dir }
+//
+// 只能有一个 handler 设它: 第二个设了**不同**的值 ⇒ 配置错（静默让后设的赢, 等于
+// 用"谁后跑"决定文件去哪, 那种东西没法调试）。
+func (a *UploadAllow) Dir(dir string) {
+	normalized, err := cleanUploadDir(dir)
+	if err != nil {
+		a.conflict = err.Error()
+		return
+	}
+	if normalized == "" {
+		return
+	}
+	if a.dirSet && a.dir != normalized {
+		a.conflict = "dir set twice: " + a.dir + " / " + normalized
+		return
+	}
+	a.dir = normalized
+	a.dirSet = true
+}
+
+// normalizeExt "PNG" / "png" / ".png" 都归一成 ".png"（空串原样）。
+func normalizeExt(ext string) string {
+	ext = strings.ToLower(strings.TrimSpace(ext))
+	if ext == "" {
+		return ""
+	}
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return ext
+}
 
 // UploadLimit 单文件上传上限（默认 10 MiB）。n <= 0 = 关闭上传（路由还在, 但一律 403）。
 //
 // 它是**硬顶**: 规则的 MaxBytes 只能更小。要更大的文件请同时改部署层的
 // client_max_body_size —— 反向代理会在应用看到请求之前就切断。
 func (s *Site) UploadLimit(n int64) { s.uploadLimit = n }
-
-// Upload 注册全站上传规则（配置期）。重复注册 / 传 nil ⇒ panic。
-func (s *Site) Upload(rule UploadRule) {
-	if rule == nil {
-		panic("web: Site.Upload(nil)")
-	}
-	if s.started {
-		panic("web: Site.Upload: must be registered before Setup")
-	}
-	if s.uploadRule != nil {
-		panic("web: Site.Upload: upload rule already registered")
-	}
-	s.uploadRule = rule
-}
 
 // 一次上传实际生效的允许范围。
 type uploadAllowance struct {
@@ -219,37 +246,36 @@ func (s *Site) apiUpload(ctx *CmsCtx) {
 	_ = ctx.Json(http.StatusOK, map[string]any{"path": "/" + filepath.ToSlash(rel)})
 }
 
-// uploadAllowance 求这次上传的允许范围（没注册规则 = 框架默认）。
+// uploadAllowance 求这次上传的允许范围: 框架默认起头, 再让 HookUpload 的 handler
+// 依次收窄（没有 handler = 就按默认）。
 func (s *Site) uploadAllowance(c *CmsCtx, up Upload) (uploadAllowance, error) {
-	allowance := uploadAllowance{maxBytes: s.uploadLimit}
-	if s.uploadRule == nil {
-		return allowance, nil
-	}
 	allow := &UploadAllow{}
-	err := s.uploadRule(c, up, allow)
+	err := s.engine.Hooks().Fire(HookUpload, c, up, allow)
 	if err != nil {
 		return uploadAllowance{}, err
 	}
-	// 校验规则声明 —— 拼错的扩展名/越界的目录是配置错误, 当场响亮（不静默放宽）
-	for _, ext := range allow.extensions {
+	if allow.conflict != "" {
+		// 配置错: 两个 handler 打架 / 目录越界 —— 响亮, 不静默挑一个
+		return uploadAllowance{}, fmt.Errorf("web: upload policy: %s", allow.conflict)
+	}
+	// 校验: 扩展名必须在框架白名单内（事件也不能放宽安全边界）
+	for ext := range allow.extensions {
 		if _, ok := uploadTypes[ext]; !ok {
 			return uploadAllowance{}, fmt.Errorf(
-				"web: upload rule allows %q, not in the framework whitelist", ext)
+				"web: upload policy allows %q, not in the framework whitelist", ext)
 		}
-		if allowance.extensions == nil {
-			allowance.extensions = map[string]bool{}
-		}
-		allowance.extensions[ext] = true
+	}
+	if allow.extensions != nil && len(allow.extensions) == 0 {
+		return uploadAllowance{}, fmt.Errorf(
+			"web: upload policy: extension sets do not intersect (nothing could be uploaded)")
+	}
+	allowance := uploadAllowance{
+		extensions: allow.extensions,
+		maxBytes:   s.uploadLimit,
+		dir:        allow.dir,
 	}
 	if allow.maxBytes > 0 && allow.maxBytes < allowance.maxBytes {
 		allowance.maxBytes = allow.maxBytes
-	}
-	if allow.dir != "" {
-		dir, err := cleanUploadDir(allow.dir)
-		if err != nil {
-			return uploadAllowance{}, err
-		}
-		allowance.dir = dir
 	}
 	return allowance, nil
 }

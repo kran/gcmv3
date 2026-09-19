@@ -39,7 +39,7 @@ func uploadTree(t *testing.T, site *Site) []string {
 // 规则按身份拒: 资料没审核过的会员传不了（登录过了也不行）。
 func TestUploadRuleDeniesByIdentity(t *testing.T) {
 	site := newPolicySite(t)
-	site.Upload(func(c *CmsCtx, _ Upload, allow *UploadAllow) error {
+	site.Hook(HookUpload, func(c *CmsCtx, _ Upload, allow *UploadAllow) error {
 		node, err := c.Principal()
 		if err != nil {
 			return Unauthorized("请先登录")
@@ -75,7 +75,7 @@ func TestUploadRuleDeniesByIdentity(t *testing.T) {
 // 规则收窄扩展名: 只列了 png 就传不了 pdf（哪怕框架白名单里有）。
 func TestUploadRuleNarrowsExtensions(t *testing.T) {
 	site := newPolicySite(t)
-	site.Upload(func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
 		allow.Extensions("PNG", ".webp") // 大写与不带点都该被归一化
 		return nil
 	})
@@ -102,7 +102,7 @@ func TestUploadRuleNarrowsExtensions(t *testing.T) {
 // 规则的 MaxBytes: 超了 413 且**磁盘上不留文件**; 正好等于上限则通过。
 func TestUploadRuleMaxBytes(t *testing.T) {
 	site := newPolicySite(t)
-	site.Upload(func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
 		allow.Extensions("png")
 		allow.MaxBytes(2048)
 		return nil
@@ -131,7 +131,7 @@ func TestUploadRuleMaxBytes(t *testing.T) {
 // 规则的 Dir: 路径里带上归属（回收/统计靠它）, 且仍能被服务。
 func TestUploadRuleDir(t *testing.T) {
 	site := newPolicySite(t)
-	site.Upload(func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
 		allow.Extensions("png")
 		allow.Dir("member/123")
 		return nil
@@ -160,7 +160,7 @@ func TestUploadRuleDir(t *testing.T) {
 
 // 规则自己的错误（配置错）⇒ 500 且不落盘: 声明白名单外的扩展名、目录越界。
 func TestUploadRuleConfigErrors(t *testing.T) {
-	cases := map[string]UploadRule{
+	cases := map[string]func(*CmsCtx, Upload, *UploadAllow) error{
 		"扩展名不在白名单": func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
 			allow.Extensions("svg")
 			return nil
@@ -179,7 +179,7 @@ func TestUploadRuleConfigErrors(t *testing.T) {
 	for name, rule := range cases {
 		t.Run(name, func(t *testing.T) {
 			site := newPolicySite(t)
-			site.Upload(rule)
+			site.Hook(HookUpload, rule)
 			site.Setup()
 			token := memberToken(t, site)
 			got := uploadFile(t, site, token, "a.png", sniffSamples[".png"], nil)
@@ -196,7 +196,7 @@ func TestUploadRuleConfigErrors(t *testing.T) {
 // **登录是框架底线**: 规则不判身份也传不了（fail-closed, 不是 fail-open）。
 func TestUploadRequiresLoginEvenWithRule(t *testing.T) {
 	site := newPolicySite(t)
-	site.Upload(func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
 		allow.Extensions("png") // 规则什么都没判
 		return nil
 	})
@@ -210,17 +210,15 @@ func TestUploadRequiresLoginEvenWithRule(t *testing.T) {
 	}
 }
 
-// 规则注册的三种错误 ⇒ panic。
-func TestUploadRuleRegistration(t *testing.T) {
+// hook 注册的两种错误 ⇒ panic（签名不匹配 / 事件名不存在）—— 上传策略也是事件,
+// 所以走的是同一套注册期校验。
+func TestUploadPolicyRegistration(t *testing.T) {
 	cases := map[string]func(*Site){
-		"nil": func(s *Site) { s.Upload(nil) },
-		"重复": func(s *Site) {
-			s.Upload(func(_ *CmsCtx, _ Upload, _ *UploadAllow) error { return nil })
-			s.Upload(func(_ *CmsCtx, _ Upload, _ *UploadAllow) error { return nil })
+		"签名不匹配": func(s *Site) {
+			s.Hook(HookUpload, func(*CmsCtx) error { return nil })
 		},
-		"Setup 之后": func(s *Site) {
-			s.Setup()
-			s.Upload(func(_ *CmsCtx, _ Upload, _ *UploadAllow) error { return nil })
+		"事件名不存在": func(s *Site) {
+			s.Hook("web.nope", func(*CmsCtx, Upload, *UploadAllow) error { return nil })
 		},
 	}
 	for name, apply := range cases {
@@ -236,11 +234,141 @@ func TestUploadRuleRegistration(t *testing.T) {
 	}
 }
 
+// **只能收窄**: 两个 handler 各说各的 ⇒ 取交集, 谁也不许放宽别人。
+func TestUploadPolicyOnlyNarrows(t *testing.T) {
+	site := newPolicySite(t)
+	// 站点: 只允许图片 + 2 MiB
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Extensions("png", "jpg", "webp")
+		allow.MaxBytes(2 << 20)
+		return nil
+	})
+	// 插件: 想放宽（多加了 pdf、把上限抬到 10 MiB）—— 都不能生效
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Extensions("png", "pdf") // png 交集里还在; pdf 是站点没允许的, 加不进来
+		allow.MaxBytes(10 << 20)
+		return nil
+	})
+	site.Setup()
+	token := memberToken(t, site)
+
+	// 插件"加"的 pdf 进不来
+	got := uploadFile(t, site, token, "a.pdf", sniffSamples[".pdf"], nil)
+	if got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("放宽的扩展名该无效: %d %q", got.Code, got.Body.String())
+	}
+	// 站点允许的 png 还在（交集非空, 所以不是"配置错"）
+	got = uploadFile(t, site, token, "a.png", sniffSamples[".png"], nil)
+	if got.Code != http.StatusOK {
+		t.Fatalf("png 该允许: %d %q", got.Code, got.Body.String())
+	}
+	// 站点没允许的 webp 也不在（插件只提了 png+pdf ⇒ 交集 = {png}）
+	got = uploadFile(t, site, token, "a.webp", sniffSamples[".webp"], nil)
+	if got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("插件没提的 webp 该不在交集里: %d %q", got.Code, got.Body.String())
+	}
+}
+
+// MaxBytes 也只能降: 站点定了 1 KiB, 插件想抬到 4 KiB ⇒ 仍然 1 KiB。
+func TestUploadPolicyMaxBytesOnlyNarrows(t *testing.T) {
+	site := newPolicySite(t)
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Extensions("png")
+		allow.MaxBytes(1024)
+		return nil
+	})
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.MaxBytes(4096) // 抬高无效
+		return nil
+	})
+	site.Setup()
+	token := memberToken(t, site)
+
+	small := append(bytes.Repeat(sniffSamples[".png"], 30), make([]byte, 512-len(sniffSamples[".png"])*30)...)
+	if got := uploadFile(t, site, token, "small.png", small, nil); got.Code != http.StatusOK {
+		t.Fatalf("512 字节该通过: %d %q (%d)", got.Code, got.Body.String(), len(small))
+	}
+	big := append(bytes.Repeat(sniffSamples[".png"], 100), make([]byte, 2048-len(sniffSamples[".png"])*100)...)
+	if got := uploadFile(t, site, token, "big.png", big, nil); got.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("2048 字节该被站点定的 1 KiB 拦住: %d %q (%d)", got.Code, got.Body.String(), len(big))
+	}
+}
+
+// 任何 handler 拒绝 ⇒ 整体拒绝（即使另一个 handler 放行）。
+func TestUploadPolicyDenyWins(t *testing.T) {
+	site := newPolicySite(t)
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Extensions("png")
+		return nil
+	})
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, _ *UploadAllow) error {
+		return Forbidden("插件不允许")
+	})
+	site.Setup()
+	got := uploadFile(t, site, memberToken(t, site), "a.png", sniffSamples[".png"], nil)
+	if got.Code != http.StatusForbidden {
+		t.Fatalf("任何一个 handler 拒绝就该拒: %d %q", got.Code, got.Body.String())
+	}
+	if files := uploadTree(t, site); len(files) != 0 {
+		t.Fatalf("被拒的不该落盘: %v", files)
+	}
+}
+
+// 两个 handler 的扩展名交集为空 ⇒ 配置错（响亮, 而不是"上传全 422"这种怪状态）。
+func TestUploadPolicyEmptyIntersection(t *testing.T) {
+	site := newPolicySite(t)
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Extensions("png")
+		return nil
+	})
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Extensions("pdf")
+		return nil
+	})
+	site.Setup()
+	got := uploadFile(t, site, memberToken(t, site), "a.png", sniffSamples[".png"], nil)
+	if got.Code != http.StatusInternalServerError {
+		t.Fatalf("交集为空该报配置错: %d %q", got.Code, got.Body.String())
+	}
+}
+
+// 两个 handler 抢 Dir ⇒ 配置错（不静默让后跑的赢）。
+func TestUploadPolicyDirConflict(t *testing.T) {
+	site := newPolicySite(t)
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Dir("member/1")
+		return nil
+	})
+	site.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Dir("member/2")
+		return nil
+	})
+	site.Setup()
+	got := uploadFile(t, site, memberToken(t, site), "a.png", sniffSamples[".png"], nil)
+	if got.Code != http.StatusInternalServerError {
+		t.Fatalf("抢 Dir 该报配置错: %d %q", got.Code, got.Body.String())
+	}
+	// 设成同一个值则没问题
+	same := newPolicySite(t)
+	same.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Dir("member/1")
+		return nil
+	})
+	same.Hook(HookUpload, func(_ *CmsCtx, _ Upload, allow *UploadAllow) error {
+		allow.Dir("member/1")
+		return nil
+	})
+	same.Setup()
+	if got := uploadFile(t, same, memberToken(t, same), "a.png", sniffSamples[".png"], nil); got.Code != http.StatusOK {
+		t.Fatalf("同值不该冲突: %d %q", got.Code, got.Body.String())
+	}
+}
+
 // 规则能看到嗅探出来的真实内容类型（不是客户端说的）。
 func TestUploadRuleSeesSniffedType(t *testing.T) {
 	site := newPolicySite(t)
 	var seen []Upload
-	site.Upload(func(_ *CmsCtx, up Upload, allow *UploadAllow) error {
+	site.Hook(HookUpload, func(_ *CmsCtx, up Upload, allow *UploadAllow) error {
 		seen = append(seen, up)
 		allow.Extensions("png", "pdf")
 		return nil

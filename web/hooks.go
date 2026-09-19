@@ -18,6 +18,14 @@ const (
 	// HookServeFile 服务 /static 与 /uploads 的文件: 插件可以改路径（图片处理、
 	// 私有文件鉴权等）。签名: func(*CmsCtx, *string) error
 	HookServeFile = "web.serve_file"
+
+	// HookUpload 上传策略 —— 站点/插件声明"谁能传、能传什么、多大、落哪"。
+	// 签名: func(*CmsCtx, Upload, *UploadAllow) error
+	//
+	// 上传不是节点操作（文件先上来、才可能被节点引用）, 所以它是**事件**而不是
+	// 按类型的策略。多个 handler 依次收窄 —— 任何 handler 返回错误即拒绝, 且
+	// allow 只能**收紧**（谁也不许放宽别人定下的限制）。
+	HookUpload = "web.upload"
 )
 
 // defineWebHooks 声明 web 事件。签名与事件名都是硬编码的 ⇒ 失败就是编程错误, panic。
@@ -25,6 +33,7 @@ func defineWebHooks(engine core.Engine) {
 	err := engine.Hooks().Define(map[string]any{
 		HookBeforeMount: func(*Site) error { return nil },
 		HookServeFile:   func(*CmsCtx, *string) error { return nil },
+		HookUpload:      func(*CmsCtx, Upload, *UploadAllow) error { return nil },
 	})
 	if err != nil {
 		panic("web: define hooks: " + err.Error())
