@@ -46,6 +46,8 @@ type Site struct {
 	auth    *AuthRegistry
 	// loginLimiter 登录/注册失败限速（配置期可调; 见 limiter.go）。
 	loginLimiter *limiter
+	// uploadLimit 单文件上传上限（配置期可调; <=0 关闭上传）。
+	uploadLimit int64
 
 	// secureCookies 认证 cookie 是否只走 HTTPS（生产必须开; 配置期设置）。
 	secureCookies bool
@@ -90,6 +92,7 @@ func Open(basedir string) (*Site, error) {
 	site := &Site{basedir: basedir, db: db, types: ts, engine: engine}
 	site.auth = newAuthRegistry(site)
 	site.loginLimiter = newLimiter(defaultLoginFailures, defaultLoginWindow)
+	site.uploadLimit = defaultUploadLimit
 	site.router = cho.New(site.CmsCtxMaker) // 空 router: 路由留到 Setup
 	site.alive.Store(true)
 	return site, nil

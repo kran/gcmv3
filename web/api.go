@@ -56,6 +56,7 @@ func (s *Site) mountNodes(g *cho.Cho[*CmsCtx]) {
 	g.Get("/nodes/{type}/{id}", s.apiView)
 	g.Put("/nodes/{type}/{id}", s.apiUpdate)
 	g.Delete("/nodes/{type}/{id}", s.apiDelete)
+	g.Post("/upload", s.apiUpload)
 }
 
 // apiList GET /api/nodes/{type}
