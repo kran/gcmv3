@@ -1,0 +1,16 @@
+# 编辑器/IDE
+.idea/
+*.iml
+
+# 产物
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+
+# 临时
+/tmp/
+*.log
+
+# 本地测试库（夹具跑出来的）
+testdata/*.sqlite
