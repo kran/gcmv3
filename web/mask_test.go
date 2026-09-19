@@ -163,7 +163,7 @@ func TestMaskNodesInPlace(t *testing.T) {
 		return nil
 	})
 	cms, _ := ctxFor(site)
-	nodes := []core.Node{
+	nodes := []*core.Node{
 		{ID: 1, Type: "article", Fields: core.Fields{"title": "甲", "phone": "1"}},
 		{ID: 2, Type: "article", Fields: core.Fields{"title": "乙", "phone": "2"}},
 	}
@@ -174,6 +174,9 @@ func TestMaskNodesInPlace(t *testing.T) {
 	for i, node := range nodes {
 		if _, ok := node.Fields["phone"]; ok {
 			t.Fatalf("nodes[%d] 该被裁: %#v", i, node.Fields)
+		}
+		if node.Fields["title"] == "" {
+			t.Fatalf("nodes[%d] 的别的字段该在: %#v", i, node.Fields)
 		}
 	}
 }

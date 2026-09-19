@@ -49,15 +49,18 @@ func (c *CmsCtx) MaskNode(node *core.Node) (*core.Node, error) {
 	return &out, nil
 }
 
-// MaskNodes 就地裁剪切片元素（每个节点按自己的类型解析规则）。
-// 站点 handler 输出 []core.Node 时用它; 框架自己的读入口已经自动套过。
-func (c *CmsCtx) MaskNodes(nodes []core.Node) error {
-	for i := range nodes {
-		masked, err := c.MaskNode(&nodes[i])
+// MaskNodes 就地裁剪（每个节点按自己的类型解析规则; 指针不变, 变的是它指向的节点）。
+//
+// 站点 handler 输出一批节点时用它; 框架自己的读入口已经自动套过。
+func (c *CmsCtx) MaskNodes(nodes []*core.Node) error {
+	for _, node := range nodes {
+		masked, err := c.MaskNode(node)
 		if err != nil {
 			return err
 		}
-		nodes[i] = *masked
+		if masked != node {
+			*node = *masked
+		}
 	}
 	return nil
 }

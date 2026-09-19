@@ -1,0 +1,116 @@
+// 读入口（身份绑定层）。
+//
+// 两个层次别混:
+//
+//	CmsCtx.List / Get        客户端发起的读: 解析读规则（行范围 + 掩码）→ 调引擎 →
+//	                         展开一层 → 套掩码。数据跨出进程前最后一步由这里保证。
+//	engine.GetNode / GetNodes / CountNodes / ExpandNodes
+//	                         内核原语: 没有身份、没有策略。后台、插件、迁移以及
+//	                         "系统自己要看"的代码走这里 —— 那是显式的可信调用。
+//
+// 行范围由服务端算, 客户端条件**只能收窄**（AND 组合成子项）。core 那边的 Where 零值
+// 是"不过滤", 所以这里保证**永远不会**把零值传下去: 策略没给范围就是配置错误（D1 的
+// 求值会报错）, 客户端没给条件就用策略范围本身。
+package web
+
+import (
+	"errors"
+
+	"github.com/kran/gcmv3/core"
+	"github.com/kran/gcmv3/so"
+)
+
+// Get 单节点读: ref 是 int/int64（id）或 string（数字先当 id、否则当地址）。
+//
+// 读规则（行范围）→ 展开一层 → 字段掩码都做完。**不存在与不可见都返回 (nil, nil)**
+// —— 调用方分不出"没有"和"看不到", 这正是要的（否则读接口变成存在性探测器）;
+// 回 404 还是回空页由调用方定。
+func (c *CmsCtx) Get(ref any) (*core.Node, error) {
+	node, err := c.site.engine.GetNode(ref)
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, CoreError(err)
+	}
+	if node == nil {
+		return nil, nil
+	}
+	visible, err := c.visible(node)
+	if err != nil || !visible {
+		return nil, err
+	}
+	err = c.expandAndMask([]*core.Node{node})
+	if err != nil {
+		return nil, err
+	}
+	return node, nil
+}
+
+// List 按读规则取一页（limit 0 = 不限）。返回节点与**不受 limit 限制**的总数。
+//
+// where 是客户端条件（零值 = 没有条件）; 它只会与策略范围 AND —— 传什么都放宽不了范围。
+//
+// 展开一层（该类型的所有引用字段）后按类型掩码: 引用不会变成掩码的旁路。
+func (c *CmsCtx) List(typeName string, where so.Where, limit, offset int) ([]*core.Node, int64, error) {
+	scope, _, err := c.readRule(typeName)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !where.IsZero() {
+		where = so.AND(where, scope)
+	} else {
+		where = scope
+	}
+	query := core.NodeQuery{Type: typeName, Where: where}
+
+	total, err := c.site.engine.CountNodes(query, 0)
+	if err != nil {
+		return nil, 0, CoreError(err)
+	}
+	if total == 0 {
+		return nil, 0, nil
+	}
+	nodes, err := c.site.engine.GetNodes(query, limit, offset)
+	if err != nil {
+		return nil, 0, CoreError(err)
+	}
+	err = c.expandAndMask(nodes)
+	if err != nil {
+		return nil, 0, err
+	}
+	return nodes, total, nil
+}
+
+// visible 这个节点在当前身份的读范围里吗（用一次"最多数 1 条"的查询问存在性）。
+func (c *CmsCtx) visible(node *core.Node) (bool, error) {
+	if node == nil {
+		return false, nil
+	}
+	scope, _, err := c.readRule(node.Type)
+	if err != nil {
+		return false, err
+	}
+	query := core.NodeQuery{
+		Type:  node.Type,
+		Where: so.AND(scope, so.P("=", "id", node.ID)),
+	}
+	count, err := c.site.engine.CountNodes(query, 1)
+	if err != nil {
+		return false, CoreError(err)
+	}
+	return count > 0, nil
+}
+
+// expandAndMask 就地展开一层再掩码。展开路径用 `*` = "该类型的所有引用字段"
+// （core 按声明算路径, web 不重复一份字段知识）。
+func (c *CmsCtx) expandAndMask(nodes []*core.Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	_, err := c.site.engine.ExpandNodes(nodes, "*")
+	if err != nil {
+		return CoreError(err)
+	}
+	return c.MaskNodes(nodes)
+}

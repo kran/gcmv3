@@ -146,6 +146,10 @@ func normalizeTree(value any) any {
 	switch item := value.(type) {
 	case nil:
 		return nil
+	case Where:
+		// 嵌套的 Where 自动取树 —— 于是 so.P("ref", "->author", so.P(…)) 也能写,
+		// 不必记得"这里要传树不是传 Where"（传错了原来只报 got so.Where 这种内部话）。
+		return item.tree
 	case json.Number:
 		if integer, err := item.Int64(); err == nil {
 			return integer
