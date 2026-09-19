@@ -2,7 +2,6 @@ package core
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -35,38 +34,15 @@ types:
       - { name: authors, kind: "refs", to: person }
 `
 
-// applySchema 把 core/migrations/*.sql 的 Up 段跑上去。
-//
-// 迁移执行器还没做（不在这一步的范围里）—— 所以测试自己把 SQL 执行一遍,
-// schema 的唯一来源仍然是那些 .sql 文件。
+// applySchema 建引擎的基础表（就是使用方该做的那件事: 直接执行 core.Schema()）。
 func applySchema(t *testing.T, db *dba.SQL) {
 	t.Helper()
-	entries, err := os.ReadDir("migrations")
+	err := db.Transaction(func(tx *dba.SQL) error {
+		_, err := tx.Add(Schema()).Exec()
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		raw, err := os.ReadFile(filepath.Join("migrations", entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var up []string
-		inUp := false
-		for _, line := range strings.Split(string(raw), "\n") {
-			trimmed := strings.TrimSpace(line)
-			switch {
-			case strings.HasPrefix(trimmed, "-- +goose Down"):
-				inUp = false
-			case strings.HasPrefix(trimmed, "-- +goose"):
-				inUp = true
-			case inUp && trimmed != "":
-				up = append(up, line)
-			}
-		}
-		_, err = db.Add(strings.Join(up, "\n")).Exec()
-		if err != nil {
-			t.Fatalf("%s: %v", entry.Name(), err)
-		}
 	}
 }
 

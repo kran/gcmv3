@@ -20,10 +20,9 @@ type GCM struct {
 // OpenGCM 建引擎: 定义标准 hook 事件。
 // 失败返回错误 — 进程入口自己决定是否致命（测试/嵌入场景不 panic）。
 //
-// **引擎不做启动期 DDL**: 表与索引全部来自 `core/migrations/*.sql`（schema 的
-// 事实来源; 迁移执行器还没做, 暂时由调用方建表 —— 见 node_write_test.go 的
-// applySchema）。连接档位（WAL / foreign_keys / busy_timeout）也由开库的那一层
-// 在 DSN 里定死 —— 在这里查一遍等于把"配置错误"推迟到运行期才响。
+// **引擎不碰 DDL**: 表和索引在 `core/schema.sql`（基础 schema, 没有增量更新）,
+// 由使用方拿 `core.Schema()` 直接执行（web.Open 就是这么做的）。连接档位
+// （WAL / foreign_keys / busy_timeout）也由开库那一层在 DSN 里定死。
 func OpenGCM(db *dba.SQL, ts *types.Types) (*GCM, error) {
 	s := &GCM{
 		db:       db,
