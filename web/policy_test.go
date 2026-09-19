@@ -27,6 +27,8 @@ types:
     fields:
       - { name: name, kind: text }
       - { name: phone, kind: text }
+      # 真实站点有一模一样的"审核状态"字段（上传规则之类会读它）
+      - { name: approval_state, kind: select, options: [pending, approved], default: pending }
   staff:
     fields:
       - { name: name, kind: text }
