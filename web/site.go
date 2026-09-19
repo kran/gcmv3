@@ -8,7 +8,7 @@
 //
 //	site, _ := web.Open(basedir)          // ① 初始化: 库 + 类型 + 引擎 + 空 router
 //	site.Type("article").OnRead(fn)       // ② 配置期: 策略 / site.Hook(...) / Router()
-//	handler := site.Start()               // ③ 启动: 挂内置路由 → http.Handler
+//	handler := site.Setup()               // ③ 启动: 挂内置路由 → http.Handler
 //
 // 内置路由只有四类: 静态文件（/static /uploads）、健康探针（/healthz /readyz）、
 // 通用 API（/api, E 步）与站点自己经 HookBeforeMount 挂的东西。
@@ -44,7 +44,7 @@ type Site struct {
 	engine  core.Engine
 	router  *cho.Cho[*CmsCtx]
 
-	// 每个类型一份授权策略（site.Type("article").OnRead(...) 注册; Start 前冻结）。
+	// 每个类型一份授权策略（site.Type("article").OnRead(...) 注册; Setup 前冻结）。
 	policies map[string]*TypePolicy
 
 	started   bool      // Setup 已执行（策略此后不可注册）

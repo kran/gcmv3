@@ -28,7 +28,6 @@ const (
 // Setup 挂载全部内置路由, 返回 http.Handler（直接 serve）。幂等, 可重复调用。
 func (s *Site) Setup() http.Handler {
 	s.setupOnce.Do(func() {
-		s.started = true // 策略此后冻结
 		err := s.engine.Hooks().Fire(HookBeforeMount, s)
 		if err != nil {
 			panic("web: before mount: " + err.Error())
@@ -36,12 +35,11 @@ func (s *Site) Setup() http.Handler {
 		s.setupFiles(filepath.Join(s.basedir, staticDir), "/static/*", "/static/", false)
 		s.setupFiles(filepath.Join(s.basedir, uploadsDir), "/uploads/*", "/uploads/", true)
 		s.setupHealth()
+		s.setupApi()
+		s.started = true // 策略此后冻结
 	})
 	return s.router
 }
-
-// Start 单站便捷入口 —— 等价 Setup（返回 http.Handler, 直接交给 http.Server）。
-func (s *Site) Start() http.Handler { return s.Setup() }
 
 // setupHealth 运维探针。
 //
@@ -88,7 +86,7 @@ func (s *Site) serveFiles(dir, pattern, prefix string, userContent bool) {
 		path := filepath.Join(dir, filepath.FromSlash(rel))
 		err := s.engine.Hooks().Fire(HookServeFile, ctx, &path)
 		if err != nil {
-			ctx.Fail(err) // 插件返回 *Error 就是它的状态码, 别的算 500
+			ctx.FailText(err) // 插件返回 *Error 就是它的状态码, 别的算 500
 			return
 		}
 		// 不让浏览器猜 MIME（猜出来的类型会绕过扩展名策略）

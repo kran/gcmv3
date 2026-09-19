@@ -30,7 +30,7 @@ type CmsCtx struct {
 	readRules map[string]readRuleResult
 }
 
-// CmsCtxMaker cho 的上下文工厂（Start 建 router 时用）。
+// CmsCtxMaker cho 的上下文工厂（Open 建 router 时用）。
 func (s *Site) CmsCtxMaker(w http.ResponseWriter, r *http.Request) *CmsCtx {
 	return &CmsCtx{BaseContext: cho.MakeBaseContext(w, r), site: s}
 }

@@ -97,7 +97,7 @@ func TestListScope(t *testing.T) {
 	theirs := createArticle(t, other, "别人的草稿")
 
 	// 作者自己看得到自己的草稿
-	mineList, total, err := me.List("article", so.Where{}, 0, 0)
+	mineList, total, err := me.List(core.NodeQuery{Type: "article"}, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestListScope(t *testing.T) {
 	}
 	// 匿名看不到任何草稿
 	anon, _ := ctxFor(site)
-	anonList, total, err := anon.List("article", so.Where{}, 0, 0)
+	anonList, total, err := anon.List(core.NodeQuery{Type: "article"}, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestListScope(t *testing.T) {
 		t.Fatalf("匿名不该看到草稿: total=%d", total)
 	}
 	// 客户端条件只能收窄: 显式点名别人的节点也拿不到
-	list, total, err := me.List("article", so.P("=", "id", theirs.ID), 0, 0)
+	list, total, err := me.List(core.NodeQuery{Type: "article", Where: so.P("=", "id", theirs.ID)}, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestListScope(t *testing.T) {
 	}
 	// 发布之后匿名看得到, 但 phone 被掩码（列表里）
 	id := mine.ID
-	_, err = me.Update(id, patchWithRevision(1, core.Fields{"title": "我的草稿"}))
+	_, err = me.Update("article", id, patchWithRevision(1, core.Fields{"title": "我的草稿"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestListScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	anonList, total, err = anon.List("article", so.Where{}, 0, 0)
+	anonList, total, err = anon.List(core.NodeQuery{Type: "article"}, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,20 +148,20 @@ func TestGetInvisible(t *testing.T) {
 	_, me, other := memberSite(t)
 	theirs := createArticle(t, other, "别人的草稿")
 
-	got, err := me.Get(theirs.ID)
+	got, err := me.Get("article", theirs.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != nil {
 		t.Fatalf("范围外该 (nil, nil): %#v", got)
 	}
-	got, err = me.Get(int64(999999))
+	got, err = me.Get("article", int64(999999))
 	if err != nil || got != nil {
 		t.Fatalf("不存在该 (nil, nil): %#v %v", got, err)
 	}
 	// 作者本人拿得到
 	mine := createArticle(t, me, "我的")
-	got, err = me.Get(mine.ID)
+	got, err = me.Get("article", mine.ID)
 	if err != nil || got == nil || got.ID != mine.ID {
 		t.Fatalf("自己的该拿得到: %#v %v", got, err)
 	}
@@ -173,12 +173,12 @@ func TestWriteRequiresVisible(t *testing.T) {
 	theirs := createArticle(t, other, "别人的草稿")
 
 	// 会员 me 看不到 other 的草稿 ⇒ 404, 而不是"规则放行就改了"
-	_, err := me.Update(theirs.ID, patchWithRevision(1, core.Fields{"title": "篡改"}))
+	_, err := me.Update("article", theirs.ID, patchWithRevision(1, core.Fields{"title": "篡改"}))
 	var notFound *Error
 	if !errors.As(err, &notFound) || notFound.Status != http.StatusNotFound {
 		t.Fatalf("err = %v", err)
 	}
-	err = me.Delete(theirs.ID)
+	err = me.Delete("article", theirs.ID)
 	if !errors.As(err, &notFound) || notFound.Status != http.StatusNotFound {
 		t.Fatalf("err = %v", err)
 	}
@@ -194,7 +194,7 @@ func TestUpdateOwnDraft(t *testing.T) {
 	_, me, _ := memberSite(t)
 	mine := createArticle(t, me, "我的")
 
-	updated, err := me.Update(mine.ID, patchWithRevision(1, core.Fields{"title": "改过"}))
+	updated, err := me.Update("article", mine.ID, patchWithRevision(1, core.Fields{"title": "改过"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestUpdateOwnDraft(t *testing.T) {
 		t.Fatalf("该改上了: %#v", updated.Fields)
 	}
 	// 白名单外的字段 422
-	_, err = me.Update(mine.ID, patchWithRevision(2, core.Fields{"state": "published"}))
+	_, err = me.Update("article", mine.ID, patchWithRevision(2, core.Fields{"state": "published"}))
 	var invalid *Error
 	if !errors.As(err, &invalid) || invalid.Status != http.StatusUnprocessableEntity {
 		t.Fatalf("err = %v", err)
@@ -217,12 +217,12 @@ func TestUpdateRevision(t *testing.T) {
 	_, me, _ := memberSite(t)
 	mine := createArticle(t, me, "我的")
 
-	_, err := me.Update(mine.ID, &core.NodePatch{Fields: core.Fields{"title": "无版本"}})
+	_, err := me.Update("article", mine.ID, &core.NodePatch{Fields: core.Fields{"title": "无版本"}})
 	var invalid *Error
 	if !errors.As(err, &invalid) || invalid.Status != http.StatusUnprocessableEntity {
 		t.Fatalf("缺 revision 的 err = %v", err)
 	}
-	_, err = me.Update(mine.ID, patchWithRevision(99, core.Fields{"title": "过期"}))
+	_, err = me.Update("article", mine.ID, patchWithRevision(99, core.Fields{"title": "过期"}))
 	var conflict *Error
 	if !errors.As(err, &conflict) || conflict.Status != http.StatusConflict {
 		t.Fatalf("过期 revision 的 err = %v", err)
@@ -264,12 +264,12 @@ func TestDeletePolicy(t *testing.T) {
 	mine := createArticle(t, me, "我的")
 	theirs := createArticle(t, other, "别人的")
 
-	err := me.Delete(theirs.ID)
+	err := me.Delete("article", theirs.ID)
 	var notFound *Error
 	if !errors.As(err, &notFound) || notFound.Status != http.StatusNotFound {
 		t.Fatalf("别人的该 404: %v", err)
 	}
-	err = me.Delete(mine.ID)
+	err = me.Delete("article", mine.ID)
 	if err != nil {
 		t.Fatalf("自己的该删得掉: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestDeletePolicy(t *testing.T) {
 		t.Fatalf("该真删了: %#v %v", gone, err)
 	}
 	// 通过读入口看: 也是 (nil, nil)
-	got, err := me.Get(mine.ID)
+	got, err := me.Get("article", mine.ID)
 	if err != nil || got != nil {
 		t.Fatalf("删掉后该 (nil, nil): %#v %v", got, err)
 	}
@@ -292,7 +292,7 @@ func TestListWithoutRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	cms, _ := ctxFor(site)
-	_, _, err = cms.List("staff", so.Where{}, 0, 0)
+	_, _, err = cms.List(core.NodeQuery{Type: "staff"}, 0, 0)
 	var denied *Error
 	if !errors.As(err, &denied) || denied.Status != http.StatusForbidden {
 		t.Fatalf("err = %v", err)
@@ -339,7 +339,7 @@ func TestWriteResponseIsMasked(t *testing.T) {
 	}
 	// 同一个节点, 换成看得到 phone 的身份读 ⇒ 没被裁
 	cms.SetActor(Actor{NodeID: 1, NodeType: "member", Realm: "frontend"})
-	got, err := cms.Get(created.ID)
+	got, err := cms.Get("article", created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

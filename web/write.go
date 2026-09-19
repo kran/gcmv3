@@ -26,6 +26,8 @@ import (
 //
 // fields 是**客户端提交的**字段（不要预先塞默认值: 默认值由引擎在策略之后应用,
 // 否则它们会进白名单被误拒）。规则可以就地改节点（补 author、改状态）。
+//
+// 顺序: 授权（注册了规则吗）→ 落库 —— 创建没有"存在性"可泄漏。
 func (c *CmsCtx) Create(typeName string, fields core.Fields) (*core.Node, error) {
 	if fields == nil {
 		fields = core.Fields{}
@@ -46,8 +48,15 @@ func (c *CmsCtx) Create(typeName string, fields core.Fields) (*core.Node, error)
 //
 // patch.Revision 是**必填**的（乐观锁: 客户端读到几就写几）—— 缺了引擎会拒绝,
 // 这里不替它补一个"读出来的最新版本"（那等于把乐观锁关掉）。
-func (c *CmsCtx) Update(id int64, patch *core.NodePatch) (*core.Node, error) {
-	existing, err := c.writable(id)
+//
+// 顺序（**授权先于存在性**）: ①这个类型注册了更新规则吗（否则匿名能靠 401/404 的
+// 差别探测 id 存不存在）②节点存在 / 看得见 / 类型对得上 ③规则 ④落库。
+func (c *CmsCtx) Update(typeName string, id int64, patch *core.NodePatch) (*core.Node, error) {
+	err := c.requireRule(typeName, VerbUpdate)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := c.writable(typeName, id)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +73,14 @@ func (c *CmsCtx) Update(id int64, patch *core.NodePatch) (*core.Node, error) {
 
 // Delete 走删除规则, 然后永久删除（被引用则拒绝）。"下线/撤回"不是内核概念 ——
 // 用类型自己的状态字段表达, 并在读规则里限制范围。
-func (c *CmsCtx) Delete(id int64) error {
-	existing, err := c.writable(id)
+//
+// 顺序同 Update（授权先于存在性）。
+func (c *CmsCtx) Delete(typeName string, id int64) error {
+	err := c.requireRule(typeName, VerbDelete)
+	if err != nil {
+		return err
+	}
+	existing, err := c.writable(typeName, id)
 	if err != nil {
 		return err
 	}
@@ -80,10 +95,10 @@ func (c *CmsCtx) Delete(id int64) error {
 	return nil
 }
 
-// writable 取"当前身份看得见的"节点 —— 写路径的第一道闸门。
+// writable 取"当前身份看得见的、且类型对得上"的节点 —— 写路径的第二道闸门。
 //
-// 看不见（不在读范围里）与不存在都回 404。
-func (c *CmsCtx) writable(id int64) (*core.Node, error) {
+// 不存在、看不见（不在读范围里）、类型不符都回 404（同一个语义, 客户端分不出来）。
+func (c *CmsCtx) writable(typeName string, id int64) (*core.Node, error) {
 	node, err := c.site.engine.GetNode(id)
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
@@ -91,7 +106,7 @@ func (c *CmsCtx) writable(id int64) (*core.Node, error) {
 		}
 		return nil, CoreError(err)
 	}
-	if node == nil {
+	if node == nil || node.Type != typeName {
 		return nil, NotFound("不存在")
 	}
 	visible, err := c.visible(node)

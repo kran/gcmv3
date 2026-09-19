@@ -22,10 +22,13 @@ import (
 
 // Get 单节点读: ref 是 int/int64（id）或 string（数字先当 id、否则当地址）。
 //
-// 读规则（行范围）→ 展开一层 → 字段掩码都做完。**不存在与不可见都返回 (nil, nil)**
-// —— 调用方分不出"没有"和"看不到", 这正是要的（否则读接口变成存在性探测器）;
-// 回 404 还是回空页由调用方定。
-func (c *CmsCtx) Get(ref any) (*core.Node, error) {
+// 读规则（行范围）→ 展开一层 → 字段掩码都做完。**不存在、不可见、类型不符都返回
+// (nil, nil)** —— 调用方分不出"没有"和"看不到", 这正是要的（否则读接口变成存在性
+// 探测器）; 回 404 还是回空页由调用方定。
+//
+// typeName 是**路由上的类型**（不是"从节点里读出来的"）: 地址是全表唯一的, 拿
+// 别的类型的路由去打一个 id 也不该拿到东西。
+func (c *CmsCtx) Get(typeName string, ref any) (*core.Node, error) {
 	node, err := c.site.engine.GetNode(ref)
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
@@ -33,7 +36,7 @@ func (c *CmsCtx) Get(ref any) (*core.Node, error) {
 		}
 		return nil, CoreError(err)
 	}
-	if node == nil {
+	if node == nil || node.Type != typeName {
 		return nil, nil
 	}
 	visible, err := c.visible(node)
@@ -47,31 +50,31 @@ func (c *CmsCtx) Get(ref any) (*core.Node, error) {
 	return node, nil
 }
 
-// List 按读规则取一页（limit 0 = 不限）。返回节点与**不受 limit 限制**的总数。
+// List 按读规则取一页（limit 0 = 不限）。返回节点与**不受 limit 限制**的总数
+// （受内核统计上限约束: 超过 core.DefaultCountLimit 时 total 是个下限）。
 //
-// where 是客户端条件（零值 = 没有条件）; 它只会与策略范围 AND —— 传什么都放宽不了范围。
+// q 带上调用方要的条件与排序（q.Type 必填）; 条件是客户端的东西 ⇒ 只会与策略范围
+// AND —— 传什么都放宽不了范围。排序也在 core 里按**声明**校验（kind 的 Sortable）。
 //
 // 展开一层（该类型的所有引用字段）后按类型掩码: 引用不会变成掩码的旁路。
-func (c *CmsCtx) List(typeName string, where so.Where, limit, offset int) ([]*core.Node, int64, error) {
-	scope, _, err := c.readRule(typeName)
+func (c *CmsCtx) List(q core.NodeQuery, limit, offset int) ([]*core.Node, int64, error) {
+	scope, _, err := c.readRule(q.Type)
 	if err != nil {
 		return nil, 0, err
 	}
-	if !where.IsZero() {
-		where = so.AND(where, scope)
+	if q.Where.IsZero() {
+		q.Where = scope
 	} else {
-		where = scope
+		q.Where = so.AND(q.Where, scope)
 	}
-	query := core.NodeQuery{Type: typeName, Where: where}
-
-	total, err := c.site.engine.CountNodes(query, 0)
+	total, err := c.site.engine.CountNodes(q, 0)
 	if err != nil {
 		return nil, 0, CoreError(err)
 	}
 	if total == 0 {
 		return nil, 0, nil
 	}
-	nodes, err := c.site.engine.GetNodes(query, limit, offset)
+	nodes, err := c.site.engine.GetNodes(q, limit, offset)
 	if err != nil {
 		return nil, 0, CoreError(err)
 	}

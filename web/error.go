@@ -134,21 +134,67 @@ func CoreError(err error) *Error {
 	return Internal("服务端错误")
 }
 
-// Fail 把错误写成**纯文本**响应 —— 文件服务、健康探针这类非 API 端点用。
+// payload 错误响应体。形状只有这一个: error（一句话）+ code（机器可读）+ details。
+func (e *Error) payload() map[string]any {
+	body := map[string]any{"error": e.Message, "code": e.Code}
+	if len(e.Details) > 0 {
+		body["details"] = e.Details
+	}
+	return body
+}
+
+// write 输出结构化错误。
+func (e *Error) write(c *CmsCtx) error { return c.Json(e.Status, e.payload()) }
+
+// Error 覆盖 cho 的同名方法: 调用形态一样是 (status, message), 但响应体固定带上
+// code（由 status 推出）—— 于是**全站错误响应只有一个形状**, 不会出现"这个端点有
+// code 那个没有"。
+func (c *CmsCtx) Error(status int, message string) error {
+	denied := &Error{Status: status, Code: codeForStatus(status), Message: message}
+	return denied.write(c)
+}
+
+// Fail 错误出口 —— API 与站点 handler 都用它。
 //
-// *Error 用自己的状态码与消息（插件的拒绝因此不会被吞成 500）; 其它一律 500 且
-// **不外泄**内部消息（只进日志）。API 端点用它自己的 JSON 形状, 不用这个。
+//   - *Error: 按声明输出（状态码 / code / details 都保留）。
+//   - core 的已知错误: 映射成 HTTP 语义（404 / 409 / 422 / 400）。
+//   - 认不出的错误: 记日志 + 通用 500（内部细节不外泄）。
+//
+// 规则返回的普通 error（不是 *Error）也走最后一条: "拒绝"要写成 web.Forbidden 这类
+// *Error, 否则站点里的数据库错误会被伪装成 403 把真问题埋掉。
 func (c *CmsCtx) Fail(err error) {
 	if err == nil {
+		panic("web: Fail(nil)")
+	}
+	var structured *Error
+	if errors.As(err, &structured) {
+		_ = structured.write(c)
 		return
 	}
-	var denied *Error
-	if errors.As(err, &denied) {
-		_ = c.Error(denied.Status, denied.Message)
-		return
+	mapped := CoreError(err)
+	if mapped.Status >= http.StatusInternalServerError {
+		slog.Error("web: request failed", "method", c.R.Method, "path", c.R.URL.Path, "err", err)
 	}
-	slog.Error("web: request failed", "path", c.R.URL.Path, "err", err)
-	_ = c.Error(http.StatusInternalServerError, "服务端错误")
+	_ = mapped.write(c)
+}
+
+// FailText 纯文本错误出口 —— 文件服务这类非 API 端点用它（API 用 Fail: JSON）。
+func (c *CmsCtx) FailText(err error) {
+	status, message := errorStatus(err)
+	if status >= http.StatusInternalServerError {
+		slog.Error("web: request failed", "method", c.R.Method, "path", c.R.URL.Path, "err", err)
+	}
+	_ = c.String(status, message)
+}
+
+// errorStatus 从 error 取对外状态码与消息。
+func errorStatus(err error) (int, string) {
+	var structured *Error
+	if errors.As(err, &structured) {
+		return structured.Status, structured.Message
+	}
+	mapped := CoreError(err)
+	return mapped.Status, mapped.Message
 }
 
 // WithCode 覆盖短码（少数需要客户端分支的错误才用）。

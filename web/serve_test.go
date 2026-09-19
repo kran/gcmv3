@@ -21,7 +21,7 @@ func do(t *testing.T, site *Site, method, target string, opts ...func(*http.Requ
 		opt(request)
 	}
 	recorder := httptest.NewRecorder()
-	site.Start().ServeHTTP(recorder, request)
+	site.Setup().ServeHTTP(recorder, request)
 	return recorder
 }
 
@@ -55,7 +55,7 @@ func TestHealthEndpoints(t *testing.T) {
 // 静态文件: 能取到, 带 nosniff, 路径穿越拒绝。
 func TestServeStatic(t *testing.T) {
 	site := newTestSite(t)
-	site.Start() // 建 static/uploads 目录
+	site.Setup() // 建 static/uploads 目录
 	dir := filepath.Join(site.basedir, staticDir)
 	err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("你好"), 0o644)
 	if err != nil {
@@ -102,7 +102,7 @@ func TestServeStatic(t *testing.T) {
 // 上传目录: 只放图片内联, 其余**强制下载**（同源 XSS 面）。
 func TestServeUploadsInlinePolicy(t *testing.T) {
 	site := newTestSite(t)
-	site.Start()
+	site.Setup()
 	dir := filepath.Join(site.basedir, uploadsDir)
 	for _, name := range []string{"logo.png", "doc.svg", "page.html", "evil.svgz"} {
 		err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644)
@@ -154,7 +154,7 @@ func TestHookServeFileRewritesPath(t *testing.T) {
 		}
 		return nil
 	})
-	site.Start()
+	site.Setup()
 	dir := filepath.Join(site.basedir, staticDir)
 	err := os.WriteFile(filepath.Join(dir, "real.txt"), []byte("真的"), 0o644)
 	if err != nil {
@@ -216,7 +216,7 @@ func TestHookBeforeMountOrder(t *testing.T) {
 	}
 }
 
-// Setup 幂等: 重复 Start/Setup 不会挂两遍路由。
+// Setup 幂等: 重复调用不会挂两遍路由。
 func TestSetupIdempotent(t *testing.T) {
 	site := newTestSite(t)
 	calls := 0
@@ -237,17 +237,17 @@ func TestSetupIdempotent(t *testing.T) {
 	}
 }
 
-// Start 之后策略冻结。
+// Setup 之后策略冻结。
 func TestPoliciesFrozenAfterStart(t *testing.T) {
 	site := newTestSite(t)
 	site.Type("article").OnRead(func(_ *CmsCtx, where *so.Where, _ *Grant) error {
 		*where = so.P("true")
 		return nil
 	})
-	site.Start()
+	site.Setup()
 	defer func() {
 		if recover() == nil {
-			t.Fatal("Start 之后注册策略该 panic")
+			t.Fatal("Setup 之后注册策略该 panic")
 		}
 	}()
 	site.Type("article")
@@ -296,7 +296,7 @@ func TestHookFires(t *testing.T) {
 		seen = s
 		return nil
 	})
-	site.Start()
+	site.Setup()
 	if seen != site {
 		t.Fatalf("hook 该拿到站点: %#v", seen)
 	}
@@ -309,13 +309,13 @@ func TestHookFires(t *testing.T) {
 			t.Fatalf("该带着原因 panic: %v", got)
 		}
 	}()
-	broken.Start()
+	broken.Setup()
 }
 
 // 引擎真的能在站点里用（端到端: 建节点 → 走 API 之前的最后一次真机核对）。
 func TestSiteEndToEnd(t *testing.T) {
 	site := newTestSite(t)
-	site.Start()
+	site.Setup()
 	_, err := site.Engine().CreateNode(nil, &core.Node{Type: "article", Fields: core.Fields{"title": "甲"}})
 	if err != nil {
 		t.Fatal(err)

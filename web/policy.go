@@ -11,7 +11,9 @@
 //	OnUpdate (id, patch, allow)  同上
 //	OnDelete (id)           纯身份判断（删除没有字段面）
 //
-// 返回 error = 拒绝（可以直接返回 *Error —— 401/403 由规则自己选）。
+// 返回 error = 拒绝。**想指定状态码就返回 *Error**（web.Unauthorized / Forbidden /
+// Conflict …）; 返回别的 error 视为服务端错误（500 + 日志）—— 规则里的数据库错误、
+// 拼错的方法调用不该伪装成 403 把真问题埋掉。
 //
 // **默认是拒绝**: 没注册规则的写动作一律 401/403; 没注册 OnRead 的类型读不出来。
 // 注册一条规则就接管了默认（"要看什么就显式写出来"）。
@@ -66,11 +68,11 @@ type TypePolicy struct {
 // Type 取某个类型的策略句柄（配置期用）。
 //
 // 类型名写错立刻 panic —— 绝不"顺手建一个不存在的类型"（那会让拼错的策略静默永不生效）。
-// Start 之后再注册同样 panic: 策略在启动前冻结（运行期改授权只有重启一条路, 免得
+// Setup 之后再注册同样 panic: 策略在开始服务前冻结（运行期改授权只有重启一条路, 免得
 // "某些请求用旧策略、某些用新策略"这种没法复现的状态）。
 func (s *Site) Type(typeName string) *TypePolicy {
 	if s.started {
-		panic("web: site.Type(" + typeName + "): policies must be registered before Start")
+		panic("web: site.Type(" + typeName + "): policies must be registered before Setup")
 	}
 	if _, ok := s.types.Type(typeName); !ok {
 		panic("web: site.Type(" + typeName + "): type not defined")
@@ -237,14 +239,15 @@ func (c *CmsCtx) authorizeCreate(node *core.Node) error {
 	if node == nil || node.Type == "" {
 		return BadRequest("创建需要类型")
 	}
-	policy := c.site.policy(node.Type)
-	if policy == nil || policy.OnCreate == nil {
-		return deniedWrite(c, "create", node.Type)
+	err := c.requireRule(node.Type, VerbCreate)
+	if err != nil {
+		return err
 	}
+	policy := c.site.policy(node.Type)
 	// 客户端提交的字段在规则加工前快照（规则自己补的字段不参与白名单）
 	submitted := fieldNames(node.Fields)
 	allow := newWriteGrant()
-	err := policy.OnCreate(c, node, allow)
+	err = policy.OnCreate(c, node, allow)
 	if err != nil {
 		return err
 	}
@@ -259,13 +262,14 @@ func (c *CmsCtx) authorizeUpdate(node *core.Node, patch *core.NodePatch) error {
 	if patch == nil {
 		return BadRequest("更新需要差量")
 	}
-	policy := c.site.policy(node.Type)
-	if policy == nil || policy.OnUpdate == nil {
-		return deniedWrite(c, "update", node.Type)
+	err := c.requireRule(node.Type, VerbUpdate)
+	if err != nil {
+		return err
 	}
+	policy := c.site.policy(node.Type)
 	submitted := fieldNames(patch.Fields)
 	allow := newWriteGrant()
-	err := policy.OnUpdate(c, node.ID, patch, allow)
+	err = policy.OnUpdate(c, node.ID, patch, allow)
 	if err != nil {
 		return err
 	}
@@ -277,11 +281,11 @@ func (c *CmsCtx) authorizeDelete(node *core.Node) error {
 	if node == nil {
 		return NotFound("不存在")
 	}
-	policy := c.site.policy(node.Type)
-	if policy == nil || policy.OnDelete == nil {
-		return deniedWrite(c, "delete", node.Type)
+	err := c.requireRule(node.Type, VerbDelete)
+	if err != nil {
+		return err
 	}
-	return policy.OnDelete(c, node.ID)
+	return c.site.policy(node.Type).OnDelete(c, node.ID)
 }
 
 // checkWritable 白名单: 客户端提交的字段必须**既可写又可读**。
@@ -294,7 +298,7 @@ func (c *CmsCtx) authorizeDelete(node *core.Node) error {
 func (c *CmsCtx) checkWritable(typeName string, submitted []string, allow *Grant) error {
 	roles := c.Actor().Roles
 	if !allow.anyFor(roles) {
-		return deniedWrite(c, "write", typeName)
+		return Forbidden("没有授权这个动作（规则没有授予任何字段）")
 	}
 	_, hidden, err := c.readRule(typeName)
 	if err != nil {
@@ -315,8 +319,39 @@ func (c *CmsCtx) checkWritable(typeName string, submitted []string, allow *Grant
 	return nil
 }
 
-// deniedWrite 没注册写规则时的回复: 匿名 401、已认证 403。
-func deniedWrite(c *CmsCtx, verb, typeName string) *Error {
+// Verb 三个写动作。读只有一个动词（OnRead），不走这里。
+type Verb string
+
+const (
+	VerbCreate Verb = "create"
+	VerbUpdate Verb = "update"
+	VerbDelete Verb = "delete"
+)
+
+// registered 这个类型注册了该动词的规则吗。
+//
+// **写入口在取节点之前先问这个** —— 否则"未注册写规则的类型"会变成"这个 id 存不存在"
+// 的探测器（匿名打一个不存在的 id 拿到 404、存但无权的 id 拿到 401/403）。
+func (p *Policy) registered(verb Verb) bool {
+	if p == nil {
+		return false
+	}
+	switch verb {
+	case VerbCreate:
+		return p.OnCreate != nil
+	case VerbUpdate:
+		return p.OnUpdate != nil
+	case VerbDelete:
+		return p.OnDelete != nil
+	}
+	return false
+}
+
+// requireRule 没注册该动词的规则 ⇒ 拒绝（匿名 401 / 已认证 403）。
+func (c *CmsCtx) requireRule(typeName string, verb Verb) error {
+	if c.site.policy(typeName).registered(verb) {
+		return nil
+	}
 	message := fmt.Sprintf("类型 %q 不允许 %s", typeName, verb)
 	if c.Actor().IsAnonymous() {
 		return Unauthorized("%s", message)

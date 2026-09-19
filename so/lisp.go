@@ -19,6 +19,28 @@ import (
 // 取值写法:  status(列) / $name(字段) / ->ref(出边) / <-type.field(入边)
 // 值:        数字 / "字符串" / true / false / null / [值 …] / {:占位符}
 func ParseLisp(src string, params map[string]any) (Expr, error) {
+	tree, err := parseLispTree(src, params)
+	if err != nil {
+		return nil, err
+	}
+	return NewReader().Read(tree)
+}
+
+// ParseWhere lisp 源码 → Where（**前端树**形态）—— 收 HTTP 的 `filter=…` 用它。
+//
+// 与 ParseLisp 的差别只是"读到哪一步": 这里产出的是**条件**本身, 与 so.P/AND/OR
+// 的产物是同一种东西, 照样进 NodeQuery.Where —— 于是算符名/字段名/复杂度的校验
+// 仍然只有编译期那一处（不在这里再校验一遍）。
+func ParseWhere(src string, params map[string]any) (Where, error) {
+	tree, err := parseLispTree(src, params)
+	if err != nil {
+		return Where{}, err
+	}
+	return Where{tree: tree}, nil
+}
+
+// parseLispTree lisp 源码 → 前端树（两个出口共用同一套 tokenizer 与占位符解析）。
+func parseLispTree(src string, params map[string]any) (any, error) {
 	if len(src) > MaxFilterBytes {
 		return nil, fmt.Errorf("query: lisp expression exceeds %d bytes", MaxFilterBytes)
 	}
@@ -32,11 +54,7 @@ func ParseLisp(src string, params map[string]any) (Expr, error) {
 	if parser.pos != len(parser.src) {
 		return nil, fmt.Errorf("query: lisp unexpected trailing input at %d", parser.pos)
 	}
-	resolved, err := resolvePlaceholders(tree, params)
-	if err != nil {
-		return nil, err
-	}
-	return NewReader().Read(resolved)
+	return resolvePlaceholders(tree, params)
 }
 
 type lispParser struct {
