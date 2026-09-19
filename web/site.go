@@ -4,11 +4,14 @@
 // 每个类型的授权策略、字段掩码、通用 API、后台界面、模板渲染。
 // 内核只有节点/边/认证原语; "谁能看/改哪些行与字段" 全在这里。
 //
-// 装配顺序（先建、再配置、最后启动 —— 中间件必须先于路由挂上）:
+// 三阶段装配（解决了插件时序: **中间件必须先于路由**）:
 //
-//	site, _ := web.Open(basedir)   // ① 开库 + 类型 + 引擎（校验就绪）
-//	site.Hook(web.HookRender, fn)  // ② 配置期: 注册策略/钩子/模板函数
-//	handler := site.Start()        // ③ 启动: 挂路由, 交出 http.Handler
+//	site, _ := web.Open(basedir)          // ① 初始化: 库 + 类型 + 引擎 + 空 router
+//	site.Type("article").OnRead(fn)       // ② 配置期: 策略 / site.Hook(...) / Router()
+//	handler := site.Start()               // ③ 启动: 挂内置路由 → http.Handler
+//
+// 内置路由只有四类: 静态文件（/static /uploads）、健康探针（/healthz /readyz）、
+// 通用 API（/api, E 步）与站点自己经 HookBeforeMount 挂的东西。
 package web
 
 import (
@@ -17,7 +20,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 
+	"github.com/kran/cho"
 	"github.com/kran/dba"
 	"github.com/kran/gcmv3/core"
 	"github.com/kran/gcmv3/types"
@@ -30,15 +36,22 @@ const (
 	typesFile = "types.yaml"
 )
 
-// Site 站点 —— 一个引擎 + 一处站点目录。
+// Site 站点 —— 一个引擎 + 一个路由器 + 一处站点目录。
 type Site struct {
 	basedir string
 	db      *dba.SQL
 	types   *types.Types
 	engine  core.Engine
+	router  *cho.Cho[*CmsCtx]
 
-	// 每个类型一份授权策略（site.Type("article").OnRead(...) 注册）。
+	// 每个类型一份授权策略（site.Type("article").OnRead(...) 注册; Start 前冻结）。
 	policies map[string]*TypePolicy
+
+	started   bool      // Setup 已执行（策略此后不可注册）
+	setupOnce sync.Once // Setup 幂等（重复调用不会挂两遍路由）
+	alive     atomic.Bool
+	closeOnce sync.Once
+	closeErr  error
 }
 
 // Open 开站点: 开库（档位在这里拼死）→ 建引擎的基础表 → 载类型 → 起引擎。
@@ -65,7 +78,12 @@ func Open(basedir string) (*Site, error) {
 		_ = db.Pool().Close()
 		return nil, err
 	}
-	return &Site{basedir: basedir, db: db, types: ts, engine: engine}, nil
+	// web 事件在**配置期之前**定义好 —— 于是 Hook 注册没有"事件还不存在"的时序问题。
+	defineWebHooks(engine)
+	site := &Site{basedir: basedir, db: db, types: ts, engine: engine}
+	site.router = cho.New(site.CmsCtxMaker) // 空 router: 路由留到 Setup
+	site.alive.Store(true)
+	return site, nil
 }
 
 // New 便捷入口: 起不来即 panic（站点启动期 fail loud）。
@@ -77,8 +95,18 @@ func New(basedir string) *Site {
 	return site
 }
 
-// Close 关站点（关连接池）。
-func (s *Site) Close() error { return s.db.Pool().Close() }
+// Close 关站点。幂等; **先摘掉就绪标志**再关连接池 —— 于是 /readyz 在关的过程中
+// 就说"closing", 负载均衡不再往这台送新请求。
+func (s *Site) Close() error {
+	s.closeOnce.Do(func() {
+		s.alive.Store(false)
+		s.closeErr = s.db.Pool().Close()
+	})
+	return s.closeErr
+}
+
+// Router 底层路由器（站点/插件在配置期挂自己的中间件与路由; 也是 chi 的逃生舱）。
+func (s *Site) Router() *cho.Cho[*CmsCtx] { return s.router }
 
 // DB 底层句柄（逃生舱）。
 func (s *Site) DB() *dba.SQL { return s.db }

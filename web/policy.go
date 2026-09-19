@@ -63,10 +63,15 @@ type TypePolicy struct {
 	policy Policy
 }
 
-// Type 取某个类型的策略句柄（注册期用）。
+// Type 取某个类型的策略句柄（配置期用）。
 //
 // 类型名写错立刻 panic —— 绝不"顺手建一个不存在的类型"（那会让拼错的策略静默永不生效）。
+// Start 之后再注册同样 panic: 策略在启动前冻结（运行期改授权只有重启一条路, 免得
+// "某些请求用旧策略、某些用新策略"这种没法复现的状态）。
 func (s *Site) Type(typeName string) *TypePolicy {
+	if s.started {
+		panic("web: site.Type(" + typeName + "): policies must be registered before Start")
+	}
 	if _, ok := s.types.Type(typeName); !ok {
 		panic("web: site.Type(" + typeName + "): type not defined")
 	}

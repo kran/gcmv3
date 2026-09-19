@@ -7,6 +7,7 @@ package web
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -131,6 +132,23 @@ func CoreError(err error) *Error {
 		return Conflict("%s", trimCorePrefix(err)).WithCode("cardinality")
 	}
 	return Internal("服务端错误")
+}
+
+// Fail 把错误写成**纯文本**响应 —— 文件服务、健康探针这类非 API 端点用。
+//
+// *Error 用自己的状态码与消息（插件的拒绝因此不会被吞成 500）; 其它一律 500 且
+// **不外泄**内部消息（只进日志）。API 端点用它自己的 JSON 形状, 不用这个。
+func (c *CmsCtx) Fail(err error) {
+	if err == nil {
+		return
+	}
+	var denied *Error
+	if errors.As(err, &denied) {
+		_ = c.Error(denied.Status, denied.Message)
+		return
+	}
+	slog.Error("web: request failed", "path", c.R.URL.Path, "err", err)
+	_ = c.Error(http.StatusInternalServerError, "服务端错误")
 }
 
 // WithCode 覆盖短码（少数需要客户端分支的错误才用）。
