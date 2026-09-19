@@ -44,6 +44,8 @@ type Site struct {
 	engine  core.Engine
 	router  *cho.Cho[*CmsCtx]
 	auth    *AuthRegistry
+	// loginLimiter 登录/注册失败限速（配置期可调; 见 limiter.go）。
+	loginLimiter *limiter
 
 	// secureCookies 认证 cookie 是否只走 HTTPS（生产必须开; 配置期设置）。
 	secureCookies bool
@@ -87,6 +89,7 @@ func Open(basedir string) (*Site, error) {
 	defineAuthHooks(engine)
 	site := &Site{basedir: basedir, db: db, types: ts, engine: engine}
 	site.auth = newAuthRegistry(site)
+	site.loginLimiter = newLimiter(defaultLoginFailures, defaultLoginWindow)
 	site.router = cho.New(site.CmsCtxMaker) // 空 router: 路由留到 Setup
 	site.alive.Store(true)
 	return site, nil

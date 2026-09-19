@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/kran/dba"
@@ -135,7 +134,9 @@ func insertEdge(tx *dba.SQL, ts *types.Types, td types.TypeDef, field types.Fiel
 		"created_at": nowValue(),
 	}).Exec()
 	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed: edges") {
+		// 同一条边重复写入（UNIQUE (from_node, field, to_node)）—— 这一层给它
+		// 更贴领域的名字; 其它约束错原样上抛。
+		if isDuplicate(err) {
 			return 0, fmt.Errorf("%w: %s.%s", ErrRelationCardinality, td.Name, field.Name)
 		}
 		return 0, err

@@ -16,6 +16,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"unicode/utf8"
@@ -84,12 +85,18 @@ func (s *Site) authLogin(ctx *CmsCtx) {
 		ctx.Fail(BadRequest("method / identifier / secret 必填"))
 		return
 	}
+	key := attemptKey("login", realm.Name, input.Method, input.Identifier)
+	if ctx.limited(key) {
+		return
+	}
 	method, err := s.engine.FindAuth(realm.NodeType, input.Method, input.Identifier)
 	if err != nil {
 		ctx.Fail(err)
 		return
 	}
-	if !verifyPassword(method, input.Secret) {
+	verified := verifyPassword(method, input.Secret)
+	ctx.recordAttempt(key, verified)
+	if !verified {
 		ctx.Fail(Unauthorized("账号或口令不正确"))
 		return
 	}
@@ -129,6 +136,11 @@ func (s *Site) authRegister(ctx *CmsCtx) {
 		ctx.Fail(Forbidden("渠道 %q 不允许用 %q 注册", realm.Name, input.Method))
 		return
 	}
+	// 注册也限速: 否则 409（标识已被注册）会变成账号枚举器（慢慢试也能枚举）。
+	registerKey := attemptKey("register", realm.Name, input.Method, input.Identifier)
+	if ctx.limited(registerKey) {
+		return
+	}
 	if input.Identifier == "" {
 		ctx.Fail(BadRequest("identifier 必填"))
 		return
@@ -136,17 +148,6 @@ func (s *Site) authRegister(ctx *CmsCtx) {
 	err = checkPassword(input.Secret)
 	if err != nil {
 		ctx.Fail(err)
-		return
-	}
-	// 先查一把, 让"这个标识已被注册"回 409 而不是落到裸的唯一约束错（500）。
-	// 竞态下仍可能撞库约束 —— 那时会给 500, 等 core 把唯一约束包成 ErrDuplicate 再收口。
-	existing, err := s.engine.FindAuth(realm.NodeType, input.Method, input.Identifier)
-	if err != nil {
-		ctx.Fail(err)
-		return
-	}
-	if existing != nil {
-		ctx.Fail(Conflict("该 %s 已被注册", input.Method))
 		return
 	}
 	// 节点从一个**空字段**的节点开始, 字段由钩子决定（见 RegisterInput 的注释）
@@ -164,6 +165,13 @@ func (s *Site) authRegister(ctx *CmsCtx) {
 	data := core.Fields{passwordKey: hash}
 	id, err := s.engine.RegisterAuth(ctx.DB(), realm.NodeType, input.Method, input.Identifier, data, node)
 	if err != nil {
+		ctx.recordAttempt(registerKey, !errors.Is(err, core.ErrDuplicate))
+		if errors.Is(err, core.ErrDuplicate) {
+			// 撞上了唯一约束: 这个标识已经有人注册过（注册端点必须能告诉用户, 所以
+			// 这里是有意的账号存在性泄漏; 限速让枚举变慢）。
+			ctx.Fail(Conflict("该 %s 已被注册", input.Method))
+			return
+		}
 		ctx.Fail(err)
 		return
 	}

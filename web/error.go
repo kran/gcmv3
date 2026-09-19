@@ -96,6 +96,8 @@ func codeForStatus(status int) string {
 		return "not_found"
 	case http.StatusConflict:
 		return "conflict"
+	case http.StatusTooManyRequests:
+		return "rate_limited"
 	case http.StatusUnprocessableEntity:
 		return "invalid"
 	case http.StatusInternalServerError:
@@ -116,6 +118,8 @@ func CoreError(err error) *Error {
 		return nil
 	case errors.Is(err, core.ErrNotFound):
 		return NotFound("不存在")
+	case errors.Is(err, core.ErrDuplicate):
+		return Conflict("%s", trimCorePrefix(err)).WithCode("duplicate")
 	case errors.Is(err, core.ErrRevisionConflict):
 		return Conflict("数据已被他人修改, 请刷新后重试").WithCode("revision_conflict")
 	case errors.Is(err, core.ErrInvalidFields):

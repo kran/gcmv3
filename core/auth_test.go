@@ -73,8 +73,8 @@ func TestRegisterAuthAtomic(t *testing.T) {
 	if err == nil {
 		t.Fatal("同一标识重复注册必须被拒")
 	}
-	if !strings.Contains(err.Error(), "already registered") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("该归到 ErrDuplicate（上层据此回 409）: %v", err)
 	}
 	// 关键: 第二次的节点**不该**留下（否则就是个登不进来的僵尸账号）
 	if count := nodeCount(t, gcm, "member"); count != 1 {

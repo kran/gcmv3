@@ -72,7 +72,7 @@ func (s *GCM) RegisterAuth(db *dba.SQL, nodeType, method, identifier string, dat
 			return err
 		}
 		if existing != nil {
-			return fmt.Errorf("core: auth: %s %q already registered", method, identifier)
+			return fmt.Errorf("%w: auth %s %q", ErrDuplicate, method, identifier)
 		}
 		id, err := s.CreateNode(tx, n)
 		if err != nil {
@@ -85,6 +85,7 @@ func (s *GCM) RegisterAuth(db *dba.SQL, nodeType, method, identifier string, dat
 			Data: data, CreatedAt: now, UpdatedAt: now,
 		}
 		_, err = tx.Insert("auth_methods", m).Exec()
+		err = duplicate(err)
 		if err != nil {
 			return fmt.Errorf("core: auth: insert method: %w", err)
 		}
@@ -126,7 +127,7 @@ func (s *GCM) AddAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, 
 			return err
 		}
 		if existing != nil {
-			return fmt.Errorf("core: auth: %s %q already registered", method, identifier)
+			return fmt.Errorf("%w: auth %s %q", ErrDuplicate, method, identifier)
 		}
 		now := nowValue()
 		m := &AuthMethod{
@@ -134,6 +135,7 @@ func (s *GCM) AddAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, 
 			Data: data, CreatedAt: now, UpdatedAt: now,
 		}
 		_, err = tx.Insert("auth_methods", m).Exec()
+		err = duplicate(err)
 		return err
 	})
 }
@@ -166,6 +168,7 @@ func (s *GCM) SetAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, 
 				Data: data, CreatedAt: now, UpdatedAt: now,
 			}
 			_, err = tx.Insert("auth_methods", m).Exec()
+			err = duplicate(err)
 			return err
 		}
 		if existing.NodeID != nodeID {

@@ -97,7 +97,7 @@ func (s *GCM) CreateNode(db *dba.SQL, n *Node) (int64, error) {
 		node.Fields = scalar
 		result, err := tx.Insert("nodes", &node).Exec()
 		if err != nil {
-			return err
+			return duplicate(err)
 		}
 		id, err = result.LastInsertId()
 		if err != nil {
@@ -174,6 +174,7 @@ func (s *GCM) PatchNode(db *dba.SQL, id int64, patch *NodePatch) error {
 		cols["updated_at"] = nowValue()
 		cols["revision"] = dba.Expr(`revision + 1`)
 		result, err := tx.Update("nodes", cols, `id = #{1} AND revision = #{2}`, id, *patch.Revision).Exec()
+		err = duplicate(err)
 		if err != nil {
 			return err
 		}
