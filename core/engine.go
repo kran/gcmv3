@@ -67,6 +67,31 @@ type Engine interface {
 	ExpandNodes(nodes []*Node, paths ...string) ([]*Node, error)
 	// ExpandNode 单个 —— ExpandNodes 的一行包装。
 	ExpandNode(node *Node, paths ...string) (*Node, error)
+
+	// ── 认证原语（不透明凭据 + realm 绑定的会话）──
+	//
+	// 内核**不解释**凭据: data 是什么由凭据插件决定（密码比对在 plugin/password）。
+	// "这个类型能不能登录" 与角色词表由 types 的 authentication 能力声明。
+
+	// RegisterAuth 原子地建可登录节点 + 绑一条凭据（同一事务 —— 节点建了凭据没
+	// 建上, 就是一个永远登不进来的账号）。
+	RegisterAuth(db *dba.SQL, nodeType, method, identifier string, data Fields, n *Node) (int64, error)
+	// FindAuth 按 (类型, 方式, 标识) 找凭据; 没有返回 (nil, nil)。
+	FindAuth(nodeType, method, identifier string) (*AuthMethod, error)
+	// AddAuthMethod 给已有节点绑一条凭据（标识被占用 ⇒ 报错）。
+	AddAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, identifier string, data Fields) error
+	// SetAuthMethod 设置/替换凭据（改密码 / 换绑）—— 标识属于别的节点时报错。
+	SetAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, identifier string, data Fields) error
+	// RemoveAuthMethod 解绑凭据, 但不许删掉最后一个（否则再也登不进来）。
+	RemoveAuthMethod(db *dba.SQL, nodeType, method, identifier string) error
+	// CreateSession 建会话, 返回**原始**令牌（库里只留 SHA-256）。
+	CreateSession(db *dba.SQL, realm string, nodeID int64) (string, error)
+	// ValidSession 解令牌: 无效或过期返回 (nil, nil)。纯读（不续期、不清理）。
+	ValidSession(token string) (*Session, error)
+	// DeleteSession 注销一条会话（登出）。
+	DeleteSession(db *dba.SQL, token string) error
+	// DeleteNodeSessions 踢掉某个节点的全部会话（改密码 / 封禁之后）。
+	DeleteNodeSessions(db *dba.SQL, nodeID int64) error
 }
 
 // ── hook 事件名（对称命名 — 写路径扩展点） ──
