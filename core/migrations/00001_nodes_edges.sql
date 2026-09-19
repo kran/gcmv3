@@ -40,10 +40,16 @@ CREATE TABLE edges (
 	to_node    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
 	sort       INTEGER NOT NULL DEFAULT 0,
 	created_at INTEGER NOT NULL,
+	-- 边唯一的约束只有这一条: 同一节点、同一字段、同一目标只存一条。
+	--（"单个引用字段至多一条边"不在这里靠数据库强制 —— 那需要把 schema 推导成
+	--  存储标志位再建部分唯一索引; 应用层写不出来两条, 并发有单写者 + 乐观锁挡着,
+	--  真出现脏数据读的时候会响亮报错。）
 	UNIQUE (from_node, field, to_node)
 );
-CREATE INDEX idx_edges_from ON edges(from_node, field);
+-- 出边按 (from_node, field) 取, 且要保 sort 序 ⇒ 这条索引一次覆盖过滤与排序。
+-- 不再单建 (from_node, field): 它是上面 UNIQUE 索引的前缀, 纯写放大。
 CREATE INDEX idx_edges_from_sort ON edges(from_node, field, sort, id);
+-- 入边方向（入边展开、删除检查的"谁引用了我"）。
 CREATE INDEX idx_edges_to ON edges(to_node, field);
 
 -- +goose Down

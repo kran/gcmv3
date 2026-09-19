@@ -439,6 +439,59 @@ func TestRefIsDirected(t *testing.T) {
 	}
 }
 
+// 「单个引用字段至多一条边」**不由数据库强制**（那要 schema→DDL 推导 + 启动期
+// 部分唯一索引）。应用层写不出来第二条, 并发有单写者 + 乐观锁挡着 —— 唯一能造出
+// 脏数据的途径是**可信的裸 SQL 导入**。那种情况下读必须响亮报错。
+func TestSingleRefDirtyDataFailsLoud(t *testing.T) {
+	gcm := openFixture(t)
+	a, _ := gcm.CreateNode(nil, &Node{Type: "person", Fields: Fields{"name": "A"}})
+	b, _ := gcm.CreateNode(nil, &Node{Type: "person", Fields: Fields{"name": "B"}})
+	owner, err := gcm.CreateNode(nil, &Node{Type: "person", Fields: Fields{"name": "O", "mentor": a}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 应用层: 单个 ref 字段只落一条边
+	if edges := edgesOf(t, gcm, owner, "mentor"); len(edges) != 1 {
+		t.Fatalf("应用层写单个 ref: %#v", edges)
+	}
+	// 同一三元组重复 ⇒ 迁移里的 UNIQUE 拒掉（这是边唯一的**默认**约束）
+	duplicate := map[string]any{
+		"from_node": owner, "field": "mentor", "to_node": a, "sort": 0, "created_at": nowValue(),
+	}
+	_, err = gcm.db.Insert("edges", duplicate).Exec()
+	if err == nil {
+		t.Fatal("同一 (节点, 字段, 目标) 重复必须被 UNIQUE 拒")
+	}
+	// 裸 SQL 塞第二条**不同目标**的边（应用层写不出来）
+	_, err = gcm.db.Insert("edges", map[string]any{
+		"from_node": owner, "field": "mentor", "to_node": b, "sort": 1, "created_at": nowValue(),
+	}).Exec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edges := edgesOf(t, gcm, owner, "mentor"); len(edges) != 2 {
+		t.Fatalf("脏数据没塞进去: %#v", edges)
+	}
+	// 读 ⇒ 响亮报错（不是静默给出两个 mentor）
+	_, err = gcm.GetNode(owner)
+	if err == nil || !strings.Contains(err.Error(), "single ref") {
+		t.Fatalf("读脏数据必须报错: %v", err)
+	}
+	// 修好之后能读（不是永久坏掉）
+	_, err = gcm.db.Delete("edges", `from_node = #{1} AND field = #{2} AND to_node = #{3}`,
+		owner, "mentor", b).Exec()
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := gcm.GetNode(owner)
+	if err != nil {
+		t.Fatalf("修好之后该能读: %v", err)
+	}
+	if node.Fields["mentor"] != a {
+		t.Fatalf("mentor = %#v", node.Fields["mentor"])
+	}
+}
+
 // 传递引用不许成环; 自引用也不许。
 func TestTransitiveCycle(t *testing.T) {
 	gcm := openFixture(t)
