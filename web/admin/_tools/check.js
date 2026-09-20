@@ -552,6 +552,50 @@ async function checkRender() {
 
     // ② NodeEditDialog 里的 display 行（手写）必须与字段行同构
     const NodeEditDialog = await loadComponent('/pages/NodeEditDialog.vue')
+
+    // 凭据面板: 只对**能登录的类型**与 owner 出现。
+    //
+    // 真实踩过: 面板对所有类型都去拉凭据 ⇒ 打开 signup/article 的编辑时端点回
+    // 400「类型不能登录」, 而面板的错误提示是全局弹的 ⇒ 一开抽屉就弹不相干的错误。
+    {
+        const authSrc = read(path.join(ADMIN_DIR, 'pages/NodeEditDialog.vue'))
+        const block = (authSrc.match(/<div[^>]*class="auth-block"[^>]*>/) || [''])[0]
+        if (!block) {
+            fail('找不到登录凭据面板（auth-block）')
+        } else {
+            for (const guard of ['isOwner', 'isAuthType']) {
+                if (!new RegExp(guard).test(block)) {
+                    fail('凭据面板缺 ' + guard + ' 守卫: ' + block)
+                }
+            }
+        }
+        // 逻辑: 非 auth 类型连问都不该问（问了就是 400 + 全局错误提示）
+        const opts = NodeEditDialog.default || NodeEditDialog
+        const savedApi = sandbox.$api
+        let meCalls = 0
+        sandbox.$api = Object.assign({}, savedApi, {
+            me: async () => { meCalls++; return { actor: { roles: ['owner'] } } },
+            authMethods: async () => ({ methods: [], password_methods: ['email'] }),
+        })
+        const fakeThis = (def) => ({
+            def: def, isOwner: false, authMethods: [], passwordMethods: [],
+            authForm: { method: '', identifier: '', secret: '' },
+            node: { id: 7, type: 'signup' }, typeName: 'signup',
+            loadAuth: opts.methods.loadAuth,
+            isAuthType: opts.computed.isAuthType,
+        })
+        const nonAuth = fakeThis({ capabilities: {} })
+        opts.methods.loadAuth.call(nonAuth)
+        await new Promise((r) => setTimeout(r, 0))
+        sandbox.$api = savedApi
+        if (meCalls !== 0) {
+            fail('非 auth 类型的抽屉不该去问凭据端点（那会弹一句不相干的 400 错误）')
+        }
+        if (nonAuth.authMethods.length !== 0) {
+            fail('非 auth 类型的凭据列表该是空的')
+        }
+    }
+
     if (process.env.DEBUG_FACTS) {
         const comp = NodeEditDialog.default || NodeEditDialog
         console.log('    [debug] computed keys: ' + Object.keys(comp.computed || {}).join(','))

@@ -26,6 +26,10 @@ const CASES = [
     ['编辑器 facts 来自详情闸门', 'render', 'pages/NodeEditDialog.vue',
         'this.detail = full', 'this.detail = null'],
     // 注入**旧的 fail-open 写法**: 缺 editable 时当成"全都能写"
+    // 非 auth 类型的抽屉不该去问凭据端点（问了就是 400 + 全局错误提示）
+    ['凭据面板缺 isAuthType 守卫闸门', 'render', 'pages/NodeEditDialog.vue',
+        'v-if="isOwner && isAuthType && isEdit && node && node.id"',
+        'v-if="isOwner && isEdit && node && node.id"'],
     ['缺 editable 不许 fail-open 闸门', 'render', 'pages/NodeEditDialog.vue',
         'var editable = this.detail.editable || []',
         "var editable = this.detail.editable || (((this.def && this.def.fields) || []).map(function (f) { return f.name }))"],

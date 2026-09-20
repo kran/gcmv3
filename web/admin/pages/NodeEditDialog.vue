@@ -8,7 +8,7 @@
                             :editing="isEdit" :masked="maskedFields" :readonly="readonlyFields" />
             <!-- 登录凭据: **只有 owner 看得到**（能改别人密码 = 能冒充别人, 与 roles 同级）。
                  服务端独立校验 —— 藏起来是省事, 不是安全边界。 -->
-            <div v-if="isOwner && isEdit && node && node.id" class="auth-block">
+            <div v-if="isOwner && isAuthType && isEdit && node && node.id" class="auth-block">
                 <div class="fr-label">
                     <span>登录凭据</span>
                     <span class="fr-kind">owner 专用</span>
@@ -207,11 +207,21 @@ export default {
             }
             this.initial = this.formSnapshot()
         },
+        // isAuthType 这个类型能不能登录（凭据面板只对能登录的类型有意义）。
+        // 来源同 permission.vue: /admin/types 的 capabilities.authentication。
+        isAuthType() {
+            var def = this.def
+            return !!(def && def.capabilities && def.capabilities.authentication)
+        },
         // loadAuth 拉凭据 + 判身份（owner 才渲染那块）。失败静默不显示: 这是附加面板,
         // 不该因为它把人挡在编辑之外（服务端仍是权威）。
         loadAuth() {
             this.authMethods = []
             this.passwordMethods = []
+            // 非 auth 类型（signup/article/banner…）没有凭据这回事 —— 问都没必要问:
+            // 端点会回 400「类型不能登录」, 而面板的错误提示是全局弹的 ⇒ 打开编辑就
+            // 弹一句不相干的错误（真实踩过）。
+            if (!this.isAuthType) return
             window.$api.me().then((me) => {
                 var roles = (me && me.actor && me.actor.roles) || []
                 this.isOwner = roles.indexOf('owner') >= 0
