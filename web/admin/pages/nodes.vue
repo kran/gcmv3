@@ -57,7 +57,7 @@
         <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>
           <template #default="{ row: r }">
             <component v-if="cellOf(c)" :is="cellOf(c)" mode="cell" :model-value="fieldOf2(r, c)"
-                       :field="fieldDef(c)" :node="r" @open-node="openRef" />
+                       :field="fieldDef(c)" :defs="typeDefs" :node="r" @open-node="openRef" />
             <span v-else-if="isStruct(c)" class="cell-struct">{{ structSummary(r, c) }}</span>
             <span v-else class="cell-error">字段 {{ c }} 没有 kind</span>
           </template>
@@ -81,7 +81,7 @@
         <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>
           <template #default="{ row: r }">
             <component v-if="cellOf(c)" :is="cellOf(c)" mode="cell" :model-value="fieldOf2(r, c)"
-                       :field="fieldDef(c)" :node="r" @open-node="openRef" />
+                       :field="fieldDef(c)" :defs="typeDefs" :node="r" @open-node="openRef" />
             <span v-else-if="isStruct(c)" class="cell-struct">{{ structSummary(r, c) }}</span>
             <span v-else class="cell-error">字段 {{ c }} 没有 kind</span>
           </template>

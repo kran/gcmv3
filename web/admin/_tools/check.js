@@ -619,8 +619,22 @@ async function checkRender() {
     if (!/@open-node=/.test(nodesSrc)) problems.push('列表没有接住引用的 @open-node（点引用链接没反应）')
     if (!/refEdit\.visible/.test(nodesSrc)) problems.push('缺引用目标的编辑抽屉（点引用链接打不开表单）')
     // ref/refs 是**筛选**语义（单选 vs 多选 → 查询 AST 不同），不是渲染特判，允许出现
-    const renderKinds = /kind\s*===\s*['"](timestamp|upload-image|upload-file|gallery|richtext|bool|select|address|textarea|number|text)['"]/
-    if (renderKinds.test(nodesSrc)) problems.push('列表里按 kind 名特判显示（应交给同名组件）')
+    const kindLit = /kind\s*===\s*[\x22\x27](timestamp|upload-image|upload-file|gallery|richtext|bool|select|address|textarea|number|text)[\x22\x27]/
+    if (kindLit.test(nodesSrc)) {
+        problems.push('列表里按 kind 名特判显示（应交给同名组件）')
+    }
+    // 单元格组件必须拿到 defs: 引用列靠它把引用目标解析成名字（缺了就只能显示 #id）。
+    // 真实踩过: 列表里每个 ref 列都显示 "#61 #61", 而编辑表单（FieldRenderer）正常 ——
+    // 因为那边传了 defs, 这里没传。
+    const cellTags = nodesSrc.match(/<component[^>]*:is="cellOf\([^>]*>/g) || []
+    if (cellTags.length === 0) {
+        problems.push('列表里找不到单元格组件')
+    }
+    for (const tag of cellTags) {
+        if (!/:defs=/.test(tag)) {
+            problems.push('列表单元格没传 :defs（引用列会退化成 #id）: ' + tag.replace(/\s+/g, ' ').slice(0, 90))
+        }
+    }
     for (const problem of problems) fail(problem)
     if (!problems.length) pass('列表单元格走渲染器，没有 kind 特判')
 

@@ -23,6 +23,7 @@ const CASES = [
     ['setup 返回未定义的名字', 'sfc', 'pages/App.vue', 'var loginRealms = ref([])', 'var loginRealmsRenamed = ref([])'],
     ['App.vue 挂载闸门', 'render', 'pages/App.vue', 'Panel.onError(', 'Panel.onErrorX('],
     ['登录渠道下拉闸门', 'render', 'pages/App.vue', ':label="r.name" :value="r.name"', ':label="r.realm" :value="r.realm"'],
+    ['列表单元格 defs 闸门', 'render', 'pages/nodes.vue', ':field="fieldDef(c)" :defs="typeDefs"', ':field="fieldDef(c)"'],
     ['引用标签闸门（display 不优先）', 'render', 'js/api.js',
         "        const declared = ((def || {}).admin || {}).display", "        const declared = ''"],
     ['引用标签闸门（兜底成 #id）', 'render', 'js/api.js',
