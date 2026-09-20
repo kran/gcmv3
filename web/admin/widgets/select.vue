@@ -1,7 +1,7 @@
 <!-- kind select：枚举；列表里标签。
-     文件名就是 kind 名（web/admin/widgets/select.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/select.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <el-tag v-if="mode === 'cell' && modelValue" size="small">{{ modelValue }}</el-tag>
+    <el-tag v-if="mode !== 'edit' && modelValue" size="small">{{ modelValue }}</el-tag>
     <el-select v-else-if="mode === 'edit'" :model-value="modelValue" placeholder="请选择"
         style="width:100%;" @update:model-value="emitValue($event)">
         <el-option v-for="o in field.options || []" :key="o" :label="o" :value="o" />

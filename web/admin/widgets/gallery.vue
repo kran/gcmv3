@@ -1,7 +1,7 @@
 <!-- kind gallery：多图；编辑 = 图集编辑器，列表 = 前 3 张缩略图 + 计数。
-     文件名就是 kind 名（web/admin/widgets/gallery.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/gallery.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell w-gallery">
+    <span v-if="mode !== 'edit'" class="w-cell w-gallery">
         <img v-for="url in thumbs" :key="url" :src="url" class="w-thumb" />
         <span v-if="rest > 0" class="w-more">+{{ rest }}</span>
         <span v-if="!list.length" class="w-empty">—</span>

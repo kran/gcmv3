@@ -1,8 +1,8 @@
 <!-- kind address：节点的地址（URL 段）。
-     文件名就是 kind 名（web/admin/widgets/address.vue），mode="edit" 编辑 / mode="cell" 只读。
+     文件名就是 kind 名（web/admin/widgets/address.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。
      这个字段由 capabilities.addressable 注入（站点声明不了）—— 全表唯一, 留空表示"没有地址"。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell w-slug">{{ modelValue }}</span>
+    <span v-if="mode !== 'edit'" class="w-cell w-slug">{{ modelValue }}</span>
     <el-input v-else :model-value="modelValue === undefined || modelValue === null ? '' : modelValue"
         placeholder="URL 段, 如 about-us（留空 = 没有地址）" @update:model-value="emitValue($event)" />
 </template>

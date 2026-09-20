@@ -1,7 +1,7 @@
 <!-- kind timestamp：时间点；库里/接口是 **Unix 秒**（整数, UTC 绝对时刻），界面按设备本地时间。
-     文件名就是 kind 名（web/admin/widgets/timestamp.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/timestamp.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell">{{ modelValue ? Widgets.localTime(modelValue) : '' }}</span>
+    <span v-if="mode !== 'edit'" class="w-cell">{{ modelValue ? Widgets.localTime(modelValue) : '' }}</span>
     <span v-else class="w-timestamp">
         <el-date-picker type="datetime" :model-value="toDate(modelValue)" :clearable="true"
             placeholder="选择时间" style="width:230px;"

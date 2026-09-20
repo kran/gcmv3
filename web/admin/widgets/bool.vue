@@ -1,7 +1,7 @@
 <!-- kind bool：布尔开关；列表里 ✓ / —。
-     文件名就是 kind 名（web/admin/widgets/bool.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/bool.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell">{{ modelValue ? '✓' : '—' }}</span>
+    <span v-if="mode !== 'edit'" class="w-cell">{{ modelValue ? '✓' : '—' }}</span>
     <el-switch v-else :model-value="!!modelValue" @update:model-value="emitValue($event)" />
 </template>
 <script>

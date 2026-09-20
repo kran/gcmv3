@@ -1,9 +1,9 @@
 <!-- kind multiselect：多选枚举（选项来自字段声明）；值 = 选项字符串数组。
      编辑 = 平铺 checkbox（一眼看全"这个人有哪些角色"，比多选下拉安全 —— 下拉会把未选项藏起来）；
      只读 = 标签列表（不是打钩的框）。选项太多属于站点的配置责任（该改用 refs）。
-     文件名就是 kind 名（web/admin/widgets/multiselect.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/multiselect.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell">{{ labels || '—' }}</span>
+    <span v-if="mode !== 'edit'" class="w-cell">{{ labels || '—' }}</span>
     <span v-else class="w-multiselect">
         <el-checkbox-group :model-value="current" @update:model-value="emitValue">
             <el-checkbox v-for="option in options" :key="option" :label="option">{{ option }}</el-checkbox>

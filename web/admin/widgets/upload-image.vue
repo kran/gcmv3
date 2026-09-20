@@ -1,7 +1,7 @@
 <!-- kind upload-image：单图；编辑 = 路径 + 上传，列表 = 缩略图。
-     文件名就是 kind 名（web/admin/widgets/upload-image.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/upload-image.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell">
+    <span v-if="mode !== 'edit'" class="w-cell">
         <img v-if="modelValue" :src="modelValue" class="w-thumb" />
         <span v-else class="w-empty">—</span>
     </span>

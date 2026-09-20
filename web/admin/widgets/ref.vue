@@ -1,8 +1,8 @@
 <!-- kind ref：单引用；编辑 = 可搜索选择（本地过滤候选），列表 = 接口展开的显示名
      （引用值存 edges 表，不在 fields 里）。
-     文件名就是 kind 名（web/admin/widgets/ref.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/ref.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell">
+    <span v-if="mode !== 'edit'" class="w-cell">
         <a v-if="target" class="w-ref-link" href="#" @click.prevent="open">{{ target.label }}</a>
         <span v-else class="w-empty">—</span>
     </span>

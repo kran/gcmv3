@@ -533,6 +533,23 @@ async function checkRender() {
         fail('只读行写了 pointer-events: none —— 值不能选中复制、引用链点不开')
     }
 
+    // 只读叶值必须把值传下去 —— 漏了 :model-value 的表现是"只读框里什么都没有"
+    // （真实踩过: 发布时间只读时是个空的日期框）。
+    const roLine = (readonlySrc.match(/mode="view"[\s\S]{0,220}?\/>/) || [''])[0]
+    if (!/:model-value=/.test(roLine)) {
+        fail('只读叶值没传 :model-value（只读框会显示成空）')
+    }
+    // kind 组件: view/cell 都只展示值 —— **只有 edit 分支是控件**。
+    // 写成 v-if="mode === 'cell'" + v-else（编辑器）的组件, 收到 view 会掉进编辑器
+    // 分支（真实踩过: 只读的发布时间渲染成了日期选择器）。
+    for (const wf of fs.readdirSync(path.join(ADMIN_DIR, 'widgets'))) {
+        if (!wf.endsWith('.vue')) continue
+        const wSrc = read(path.join(ADMIN_DIR, 'widgets', wf))
+        if (/mode === 'cell'/.test(wSrc) && !/mode === 'view'|mode !== 'edit'/.test(wSrc)) {
+            fail('widgets/' + wf + " 只认 cell/view 里的一个: 收到 view 会掉进编辑器分支")
+        }
+    }
+
     // ② NodeEditDialog 里的 display 行（手写）必须与字段行同构
     const NodeEditDialog = await loadComponent('/pages/NodeEditDialog.vue')
     if (process.env.DEBUG_FACTS) {
@@ -903,6 +920,55 @@ async function checkRender() {
     } else {
         pass('只读详情（view）: 文本/多行/富文本都显示完整内容（不截断）')
     }
+
+    // ⑨c 只读详情（view）里**不许出现编辑控件** —— 13 个 kind 全过一遍。
+    // 真实踩过: 只读的发布时间渲染成了日期选择器（还带"选择时间"占位）。
+    // 桩件保留了 tag ⇒ 直接把编辑类控件的 tag 找出来。
+    const EDITOR_TAGS = ['el-input', 'el-textarea', 'el-select', 'el-option', 'el-date-picker',
+        'el-input-number', 'el-switch', 'el-checkbox', 'el-radio', 'el-upload',
+        'el-color-picker', 'rich-editor']
+    for (const kind of Object.keys(samples)) {
+        renderErrors.length = 0
+        const host = mount({
+            render() {
+                return Vue.h(sandbox.Widgets.resolve(kind), {
+                    mode: 'view', modelValue: samples[kind], field: { kind, name: 'ref' },
+                    node: {},
+                    defs: { category: { admin: { columns: ['name'] }, fields: [{ name: 'name', kind: 'text' }] } },
+                })
+            },
+        }, {}, stubs)
+        await tick()
+        const tags = walk(host).map(n => n.tag)
+        const bad = tags.filter(t => EDITOR_TAGS.indexOf(t) >= 0)
+        if (bad.length) {
+            fail(kind + ' 在只读详情里渲染了编辑控件: ' + bad.join(','))
+        }
+        // "渲染出内容" = 有文本 / innerHTML / 图片地址（图集和单图就是 <img :src>）
+        const hasContent = walk(host).some(n => (n.text || '').length ||
+            ((n.props && (n.props.innerHTML || n.props.src)) || '').length)
+        if (!hasContent) fail(kind + ' 在只读详情里什么都没渲染')
+    }
+    // 时间字段单独钉一条: 必须显示**值**, 不能是编辑器的"选择时间"占位
+    {
+        const host = mount({
+            render() {
+                return Vue.h(sandbox.Widgets.resolve('timestamp'), {
+                    mode: 'view', modelValue: 1784367000, field: { kind: 'timestamp', name: 'published_at' }, node: {},
+                })
+            },
+        }, {}, stubs)
+        await tick()
+        const shown = walk(host).map(n => n.text || '').join('')
+        const want = sandbox.Widgets.localTime(1784367000)
+        if (shown.indexOf(want) < 0) {
+            fail('只读的 timestamp 没显示时间值（显示的是: ' + JSON.stringify(shown.slice(0, 30)) + '）')
+        }
+        if (shown.indexOf('选择时间') >= 0) {
+            fail('只读的 timestamp 显示了编辑器的"选择时间"占位（说明掉进了编辑器分支）')
+        }
+    }
+    if (!renderErrors.length) pass('只读详情（view）: 13 个 kind 都没有编辑控件, 时间显示值而不是占位')
     // ⑩ 编辑器链路（穿透异步组件）：真实组件里改值 → 表单收到 update:modelValue。
     //    监听器要穿过 defineAsyncComponent 才到得了 FieldRenderer —— 这里断了，
     //    编辑会"看着能打字、保存却是空值"，没有任何报错。

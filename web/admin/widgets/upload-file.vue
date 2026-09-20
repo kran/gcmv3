@@ -1,7 +1,7 @@
 <!-- kind upload-file：单文件；编辑 = 路径 + 上传，列表 = 文件名链接。
-     文件名就是 kind 名（web/admin/widgets/upload-file.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+     文件名就是 kind 名（web/admin/widgets/upload-file.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
-    <span v-if="mode === 'cell'" class="w-cell">
+    <span v-if="mode !== 'edit'" class="w-cell">
         <a v-if="modelValue" :href="modelValue" target="_blank">{{ Widgets.fileName(modelValue) }}</a>
         <span v-else class="w-empty">—</span>
     </span>
