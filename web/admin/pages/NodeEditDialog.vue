@@ -6,6 +6,37 @@
             <field-renderer v-if="def" :fields="def.fields" v-model="form.fields"
                             :node="{ fields: form.fields, expand: refExpand }" :defs="defs"
                             :editing="isEdit" :masked="maskedFields" :readonly="readonlyFields" />
+            <!-- 登录凭据: **只有 owner 看得到**（能改别人密码 = 能冒充别人, 与 roles 同级）。
+                 服务端独立校验 —— 藏起来是省事, 不是安全边界。 -->
+            <div v-if="isOwner && isEdit && node && node.id" class="auth-block">
+                <div class="fr-label">
+                    <span>登录凭据</span>
+                    <span class="fr-kind">owner 专用</span>
+                </div>
+                <div v-if="authMethods.length" class="auth-list">
+                    <div v-for="item in authMethods" :key="item.method + ':' + item.identifier" class="auth-row">
+                        <span class="auth-method">{{ item.method }}</span>
+                        <span class="auth-identifier">{{ item.identifier }}</span>
+                        <el-button link size="small" type="danger"
+                                   @click="removeAuth(item.method)">解绑</el-button>
+                    </div>
+                </div>
+                <div v-else class="auth-empty">还没有登录凭据（这个人登不进来）</div>
+                <div class="auth-form">
+                    <el-select v-model="authForm.method" size="small" style="width:118px;">
+                        <el-option v-for="name in passwordMethods" :key="name" :label="name" :value="name" />
+                    </el-select>
+                    <el-input v-model="authForm.identifier" size="small" placeholder="邮箱 / 手机号 / 用户名"
+                              style="width:220px;" />
+                    <el-input v-model="authForm.secret" size="small" type="password" show-password
+                              placeholder="新口令（至少 8 位）" style="width:180px;" />
+                    <el-button size="small" type="primary" @click="saveAuth">设置口令</el-button>
+                </div>
+                <p class="fr-hint">
+                    设置后该账号**所有登录态会被踢掉**（口令在服务端 bcrypt 存储, 这里不回显）。
+                </p>
+            </div>
+
             <p v-if="maskedFields.length" class="fr-hint">
                 有 {{ maskedFields.length }} 个字段你看不到（读规则裁掉了）—— 保存不会动它们。
             </p>
@@ -46,6 +77,10 @@ export default {
             form: { revision: 0, fields: {} },
             saving: false, def: null,
             detail: null,   // 刚拉回来的详情（带 masked/editable/expand 三个事实）
+            isOwner: false,        // 凭据面板只对 owner 显示（服务端另有独立校验）
+            authMethods: [],       // 这个节点已有的凭据（方式 + 标识, 永无哈希）
+            passwordMethods: [],   // 类型声明过、框架能设口令的方式
+            authForm: { method: '', identifier: '', secret: '' },
             initial: '',   // 加载完成时的表单快照（判断"有没有未保存修改"）
             rebaseline: null, // 打开后重设基线的定时器（控件归一化之后再取）
         }
@@ -93,8 +128,12 @@ export default {
             if (!v) return
             clearTimeout(this.rebaseline)
             this.saving = false
-            if (this.isEdit) this.loadEdit()
-            else this.loadCreate()
+            if (this.isEdit) {
+                this.loadEdit()
+                this.loadAuth()
+            } else {
+                this.loadCreate()
+            }
         },
     },
     methods: {
@@ -168,6 +207,49 @@ export default {
             }
             this.initial = this.formSnapshot()
         },
+        // loadAuth 拉凭据 + 判身份（owner 才渲染那块）。失败静默不显示: 这是附加面板,
+        // 不该因为它把人挡在编辑之外（服务端仍是权威）。
+        loadAuth() {
+            this.authMethods = []
+            this.passwordMethods = []
+            window.$api.me().then((me) => {
+                var roles = (me && me.actor && me.actor.roles) || []
+                this.isOwner = roles.indexOf('owner') >= 0
+                if (!this.isOwner) return
+                var type = (this.node && this.node.type) || this.typeName
+                window.$api.authMethods(type, this.node.id).then((res) => {
+                    this.authMethods = res.methods || []
+                    this.passwordMethods = res.password_methods || []
+                    if (!this.authForm.method && this.passwordMethods.length) {
+                        this.authForm.method = this.passwordMethods[0]
+                    }
+                }).catch(() => {})
+            }).catch(() => {})
+        },
+        // saveAuth 设置/重置口令（服务端改完会踢掉该账号所有会话）。
+        saveAuth() {
+            var type = (this.node && this.node.type) || this.typeName
+            if (!this.authForm.method || !this.authForm.identifier || !this.authForm.secret) {
+                ElementPlus.ElMessage.warning('方式 / 标识 / 新口令都要填')
+                return
+            }
+            window.$api.authSet(type, this.node.id, {
+                method: this.authForm.method,
+                identifier: this.authForm.identifier.trim(),
+                secret: this.authForm.secret,
+            }).then(() => {
+                ElementPlus.ElMessage.success('口令已设置（该账号的登录态已失效）')
+                this.authForm.secret = ''
+                this.loadAuth()
+            }).catch((err) => { ElementPlus.ElMessage.error(err.message || '设置失败') })
+        },
+        removeAuth(method) {
+            var type = (this.node && this.node.type) || this.typeName
+            window.$api.authRemove(type, this.node.id, method).then(() => {
+                ElementPlus.ElMessage.success('已解绑')
+                this.loadAuth()
+            }).catch((err) => { ElementPlus.ElMessage.error(err.message || '解绑失败') })
+        },
         loadEdit() {
             var r = this.node
             var type = r.type || this.typeName
@@ -234,4 +316,12 @@ export default {
 <style>
 .fr-cell { padding: 4px 8px; border-radius: 4px; background: #f9fafb; border: 1px solid #eee; }
 .fr-hint { color: #9ca3af; font-size: 12px; margin: 8px 0 0; }
+/* 登录凭据面板（owner 专用） */
+.auth-block { margin-top: 16px; padding: 10px 12px; border: 1px solid #f0d9d9; border-radius: 6px; background: #fffaf9; }
+.auth-list { margin-bottom: 8px; }
+.auth-row { display: flex; align-items: center; gap: 10px; padding: 2px 0; font-size: 13px; }
+.auth-method { min-width: 72px; color: #999; }
+.auth-identifier { flex: 1; color: #333; word-break: break-all; }
+.auth-empty { margin-bottom: 8px; color: #a19f9d; font-size: 12px; font-style: italic; }
+.auth-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 </style>

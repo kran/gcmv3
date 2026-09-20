@@ -31,6 +31,11 @@ window.$api = {
     // 读规则照旧生效 —— 读不到的行不进树）。sort 同列表: `$sort,-$sort`。
     tree:       function (type, sort) { return Panel.get('/admin/tree/' + type, sort ? { sort: sort } : {}) },
 
+    // 登录凭据（**只有 owner** —— 服务端独立校验, 这里只是面板）
+    authMethods: function (type, id) { return Panel.get('/admin/auth/' + type + '/' + id) },
+    authSet:     function (type, id, body) { return Panel.post('/admin/auth/' + type + '/' + id, body) },
+    authRemove:  function (type, id, method) { return Panel.del('/admin/auth/' + type + '/' + id + '/' + method) },
+
     // refLabel: 节点显示名（任何消费端统一）— 后台列表/引用选择器用。
     // 优先级: 合成节点自带的 label（预置值回显）→ 类型 **admin.columns** 里第一个非空标量
     //        → 类型字段序里第一个非空字符串标量 → expand 引用合成 → #id。
