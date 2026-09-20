@@ -28,6 +28,12 @@ const (
 // Setup 挂载全部内置路由, 返回 http.Handler（直接 serve）。幂等, 可重复调用。
 func (s *Site) Setup() http.Handler {
 	s.setupOnce.Do(func() {
+		// CORS 中间件要**全局**挂: 预检（OPTIONS）没有匹配的路由, 作用域中间件
+		// 根本不会被触发（chi 直接回 405）；它自己在中间件里把范围限到 /api。
+		// 必须在任何路由注册之前追加（chi 的路由之后再 Use 会 panic）。
+		if s.corsEnabled() {
+			s.router.UseStd(s.corsMiddleware)
+		}
 		err := s.engine.Hooks().Fire(HookBeforeMount, s)
 		if err != nil {
 			panic("web: before mount: " + err.Error())

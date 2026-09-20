@@ -48,6 +48,9 @@ type Site struct {
 	loginLimiter *limiter
 	// uploadLimit 单文件上传上限（配置期可调; <=0 关闭上传）。
 	uploadLimit int64
+	// corsOrigins / corsAny API 的跨源来源清单（配置期可调; 见 cors.go）。
+	corsOrigins map[string]bool
+	corsAny     bool
 
 	// secureCookies 认证 cookie 是否只走 HTTPS（生产必须开; 配置期设置）。
 	secureCookies bool
