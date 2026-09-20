@@ -70,7 +70,15 @@ type AdminView struct {
 	//
 	// 纯展示声明（与 Columns/Tree 同类）: 不参与校验/策略, 也不落库 ——
 	// 列表走读入口现查（读规则照旧生效, 藏起来的节点不出现）。
-	Inbounds []string `yaml:"inbounds,omitempty" json:"inbounds,omitempty"`
+	//
+	//	admin:
+	//	  inbounds:
+	//	    - { ref: article.category, fields: [name, state, updated_at] }
+	//
+	// fields 是要在这个小列表里显示的列（**这里是"分类页里看文章"的上下文**,
+	// 跟内容列表的 admin.columns 不是一回事 —— 在这里再显示"分类"列是废话）。
+	// 不写 = 用对方的 admin.columns。
+	Inbounds []InboundSpec `yaml:"inbounds,omitempty" json:"inbounds,omitempty"`
 }
 
 // FieldDef 字段定义。代数声明在字段顶层:

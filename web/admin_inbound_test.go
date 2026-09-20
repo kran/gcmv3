@@ -15,7 +15,10 @@ const inboundTypes = `
 types:
   category:
     capabilities: { addressable: true }
-    admin: { display: name, inbounds: [article.category] }
+    admin:
+      display: name
+      inbounds:
+        - { ref: article.category, fields: [name, state] }
     fields:
       - { name: name, kind: text }
   article:
@@ -68,6 +71,10 @@ func TestAdminInbounds(t *testing.T) {
 	if !strings.Contains(body, `"spec":"article.category"`) || !strings.Contains(body, `"label":"article"`) {
 		t.Fatalf("该带上声明信息: %s", body)
 	}
+	// 声明的展示列要下发（前端据此渲染列, 而不是猜）
+	if !strings.Contains(body, `"fields":["name","state"]`) {
+		t.Fatalf("该下发要显示的列: %s", body)
+	}
 }
 
 // 声明校验: 写法错 / 类型不存在 / 字段不存在 / 不是指向本类型 ⇒ 加载期报错。
@@ -76,19 +83,33 @@ func TestInboundsValidation(t *testing.T) {
 		{"写法错", `
 types:
   category:
-    admin: { inbounds: [articlecategory] }
+    admin:
+      inbounds: [{ ref: articlecategory }]
     fields: [{ name: name, kind: text }]
 `, "类型.字段"},
+		{"fields 里的字段不存在", `
+types:
+  category:
+    admin:
+      inbounds: [{ ref: article.category, fields: [nope] }]
+    fields: [{ name: name, kind: text }]
+  article:
+    fields:
+      - { name: name, kind: text }
+      - { name: category, kind: ref, to: category }
+`, "没有这个字段"},
 		{"类型不存在", `
 types:
   category:
-    admin: { inbounds: [nope.category] }
+    admin:
+      inbounds: [{ ref: nope.category }]
     fields: [{ name: name, kind: text }]
 `, "不存在"},
 		{"字段不存在", `
 types:
   category:
-    admin: { inbounds: [article.nope] }
+    admin:
+      inbounds: [{ ref: article.nope }]
     fields: [{ name: name, kind: text }]
   article:
     fields: [{ name: name, kind: text }]
@@ -96,7 +117,8 @@ types:
 		{"不是指向本类型", `
 types:
   category:
-    admin: { inbounds: [article.author] }
+    admin:
+      inbounds: [{ ref: article.author }]
     fields: [{ name: name, kind: text }]
   member:
     fields: [{ name: name, kind: text }]

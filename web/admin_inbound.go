@@ -65,7 +65,9 @@ func (s *Site) adminInbounds(ctx *CmsCtx) {
 		}
 		items = append(items, map[string]any{
 			"spec": in.Spec, "type": in.Type, "field": in.Field, "label": in.Label,
-			"total": total, "nodes": nodes,
+			// 要显示的列（缺省已在 types.Inbounds 里补成对方的 admin.columns）
+			"fields": in.Fields,
+			"total":  total, "nodes": nodes,
 		})
 	}
 	_ = ctx.Json(http.StatusOK, map[string]any{"items": items})
