@@ -604,6 +604,25 @@ async function checkRender() {
         pass('masked 字段留"无权限查看"占位（无控件）；不可写字段走组件只读展示；可写字段仍是编辑控件')
     }
 
+    // 只读叶值必须把**值**喂给组件（不是只把 mode 改掉）—— 真实踩过:
+    // 发布时间标着"只读", 组件收到的 modelValue 却是 undefined ⇒ 空框。
+    {
+        const tsHost = mount(FieldRenderer.default || FieldRenderer, {
+            fields: [{ name: 'published_at', kind: 'timestamp', label: '发布时间' }],
+            modelValue: { published_at: 1784367000 },
+            editing: true, masked: [], readonly: ['published_at'],
+        }, stubs)
+        const w = walk(tsHost).find(isWidget)
+        if (!w) {
+            fail('只读的 timestamp 字段没有走组件渲染')
+        } else if (w.props.mode !== 'view') {
+            fail('只读字段喂给组件的 mode 是 ' + w.props.mode + '（应为 view）')
+        } else if (w.props.value !== 1784367000) {
+            // 桩件把收到的 modelValue 放在 value 上（它就是"组件拿到的值"）
+            fail('只读字段没把值喂给组件（组件收到 ' + JSON.stringify(w.props.value) + '）')
+        }
+    }
+
     // display 系统列已经去掉（显示什么完全由 types 声明决定）⇒ 节点表单里**不该**再手写
     // 字段行: 所有行都来自 FieldRenderer。这里查源码而不是 DOM —— mount 时 watcher 还没跑,
     // def 为空 ⇒ DOM 里 0 行, 断言 DOM 只会绿灯放行"手写行又回来了"。
