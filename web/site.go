@@ -89,6 +89,7 @@ func Open(basedir string) (*Site, error) {
 	// web 事件在**配置期之前**定义好 —— 于是 Hook 注册没有"事件还不存在"的时序问题。
 	defineWebHooks(engine)
 	defineAuthHooks(engine)
+	defineAdminHooks(engine)
 	site := &Site{basedir: basedir, db: db, types: ts, engine: engine}
 	site.auth = newAuthRegistry(site)
 	site.loginLimiter = newLimiter(defaultLoginFailures, defaultLoginWindow)

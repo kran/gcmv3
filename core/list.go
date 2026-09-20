@@ -6,8 +6,8 @@ type List[T any] struct {
 	items []T
 }
 
-// NewList 空集合。
-func NewList[T any]() *List[T] { return &List[T]{} }
+// NewList 空集合（items 是空切片而不是 nil —— 序列化成 `[]`, 不是 `null`）。
+func NewList[T any]() *List[T] { return &List[T]{items: []T{}} }
 
 // Append 追加到末尾（钩子回填顺序 — 后注册的靠后）。
 func (l *List[T]) Append(vals ...T) { l.items = append(l.items, vals...) }

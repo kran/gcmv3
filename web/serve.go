@@ -36,6 +36,7 @@ func (s *Site) Setup() http.Handler {
 		s.setupFiles(filepath.Join(s.basedir, uploadsDir), "/uploads/*", "/uploads/", true)
 		s.setupHealth()
 		s.setupApi()
+		s.setupAdmin()
 		s.started = true // 策略此后冻结
 	})
 	return s.router
