@@ -68,7 +68,7 @@
 
 // ── Element Plus: Atlassian 表单风格 (2px 边 + 灰底 + 微圆角) ──
 :root {
-    --el-border-radius-base: 3px;
+    --el-border-radius-base: 0px;
     --el-border-radius-small: 2px;
     --el-border-radius-round: 18px;
     --el-card-border-radius: 3px;
@@ -76,6 +76,12 @@
     --el-messagebox-border-radius: 3px;
     --el-popover-border-radius: 3px;
 }
+
+// tag 的圆角**不能**在 :root 里设 —— Element Plus 把它定义在 .el-tag 元素自己身上
+// （`.el-tag{--el-tag-border-radius:4px; border-radius:var(--el-tag-border-radius)}`），
+// 变量就近优先 ⇒ 祖先设的值会被元素自己的声明盖掉。必须写在 .el-tag 上（本文件在 EP
+// 之后加载, 同特异性下后者胜）。
+.el-tag { --el-tag-border-radius: 0px; }
 
 // 输入控件: 浅灰底 + 1px 细边（Directus 风格 — 原 2px box-shadow 内框太粗）
 .el-input__wrapper, .el-select__wrapper, .el-textarea__inner {
