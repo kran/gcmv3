@@ -14,7 +14,7 @@
             <div class="panel-login-subtitle">{{ siteName }} · 内容管理</div>
             <el-form @submit.prevent="doLogin" class="panel-login-form">
                 <el-select v-if="loginRealms.length > 1" v-model="loginForm.realm" placeholder="登录渠道" size="large">
-                    <el-option v-for="r in loginRealms" :key="r.realm" :label="r.realm" :value="r.realm" />
+                    <el-option v-for="r in loginRealms" :key="r.name" :label="r.name" :value="r.name" />
                 </el-select>
                 <el-input v-model="loginForm.identifier" placeholder="账号" size="large">
                     <template #prefix><el-icon><User /></el-icon></template>
@@ -222,7 +222,7 @@ export default {
         async function doLogin() {
             loginForm.loading = true
             loginForm.error = ''
-            var realm = loginForm.realm || (loginRealms.value[0] && loginRealms.value[0].realm)
+            var realm = loginForm.realm || (loginRealms.value[0] && loginRealms.value[0].name)
             if (!realm) { loginForm.error = '没有可登录的类型'; loginForm.loading = false; return }
             try {
                 // 走该类型自己的登录端点（会员用微信、员工用用户名密码…）⇒ 同一个 session

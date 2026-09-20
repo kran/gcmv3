@@ -333,7 +333,9 @@ export default {
             } finally { this.loading = false }
         },
         onPageChange(p) { this.query.page = p; this.refresh() },
-        fmt(s) { return s ? s.replace('T', ' ').slice(0, 16) : '' },
+        // 时间列是 **Unix 秒**（整数）—— 显示按设备本地时间（v2 是 ISO 字符串,
+        // 端口时这里漏了: `s.replace` 在数字上直接抛 TypeError）。
+        fmt(s) { return s ? Widgets.localTime(s) : '' },
         // 列表标题: 统一走 $api.refLabel（admin.columns 首个非空 → 字段序 → expand 合成）
         titleOf(r) {
             return window.$api.refLabel(r, this.typeDefs[r.type] || null)

@@ -63,11 +63,21 @@ function loadRuntime() {
     const loadModule = sandbox['vue3-sfc-loader'].loadModule
 
     // 模块 id 用 /pages/x.vue 形态（与浏览器一致：相对 import 靠它解析）
+    //
+    // `$api` 必须是**指向 sandbox.$api 的代理**, 不能是固定对象: 组件里写的是
+    // `import $api from '$api'` ⇒ 加载那一刻拿到的引用会被缓存。写死一个 `{}` 的话,
+    // 各处测试设的 sandbox.$api 全都进不去（踩过: 登录渠道那段闸门就这么静默失效,
+    // 组件拿到空对象 → loginRealms is not a function）。浏览器里 panel.js 映射的是
+    // window.$api, 同一个道理。
+    const apiProxy = new Proxy({}, {
+        get: (_, key) => sandbox.$api && sandbox.$api[key],
+        has: (_, key) => Boolean(sandbox.$api && key in sandbox.$api),
+    })
     const options = () => ({
         moduleCache: {
             vue: Vue,
             'vue-router': { useRouter: () => ({ afterEach: () => {}, push: () => {}, replace: () => {}, currentRoute: { value: {} } }), useRoute: () => ({ name: '', params: {}, query: {}, path: '/' }), createRouter: () => ({}), createWebHashHistory: () => ({}) },
-            '$api': {},
+            '$api': apiProxy,
         },
         async getFile(url) {
             const file = path.join(ADMIN_DIR, url.replace(/^\//, ''))
@@ -650,6 +660,7 @@ async function checkRender() {
     //    （树视图与树筛选已延后 —— 内核没有 tree, admin.view=tree 暂时只是声明。）
     const NodesPage = await loadComponent('/pages/nodes.vue')
     const nodesComp = NodesPage.default || NodesPage
+    const NodesPageMethods = nodesComp.methods
 
     const methods = nodesComp.methods
     // ④b 点引用链接 → 打开目标节点的编辑抽屉（只带 id+type，表单自己去拉全量与引用回显）
@@ -746,6 +757,31 @@ async function checkRender() {
     // ⑨ 每个 kind 的**真实**组件（不是桩件）：cell 模式必须真的渲染出内容。
     //    组件是异步的 —— 等一拍再断言；"列表里那列是空的"就是这么漏掉的。
     vm.runInContext(read(path.join(ADMIN_DIR, 'js/widgets.js')), sandbox, { filename: 'widgets.js' })
+
+    // ③c nodes.vue 的时间列格式化: 值现在是 **Unix 秒**（整数）——
+    //     直接对数字做 .replace('T',' ') 会抛 TypeError（真实踩过, 列表整页崩）。
+    const fmt = (NodesPageMethods || {}).fmt
+    if (typeof fmt !== 'function') {
+        fail('nodes.vue 没有 fmt（更新时间列的格式化）')
+    } else {
+        let formatted = ''
+        try {
+            formatted = fmt.call({}, 1789000000)
+        } catch (err) {
+            fail('时间列格式化吃不下 Unix 秒: ' + (err && err.message ? err.message : String(err)))
+        }
+        if (formatted && !/^\d{4}-\d{2}-\d{2}/.test(formatted)) {
+            fail('时间列该显示成本地日期: ' + JSON.stringify(formatted))
+        } else if (formatted && fmt.call({}, null) !== '') {
+            fail('空值该显示成空串')
+        } else if (formatted) {
+            pass('列表时间列: Unix 秒 → 本地时间（' + formatted + '）')
+        }
+    }
+
+
+
+
     sandbox.Panel = { loadComponent: (rel) => loadComponent('/' + rel) }
     // 期望值：每行 [modelValue, 应该看到的内容注解]（文本片段或图片数）
     const samples = {
@@ -956,11 +992,21 @@ async function checkRender() {
         onError: () => {},                    // App.vue 在这里注册 401 → 登出
         get: async () => ({}), post: async () => ({}),
     }
+    // 注意: SFC 加载器在 import 时就把 `$api` **快照**下来了（import $api from '$api'），
+    // 之后再 Object.assign 补方法**不会**被组件看见（踩过: 登录渠道那段就是这么静默失效的）。
+    // 所以这里一次给全, 行为用开关切（未登录 / 已登录两种场景挂两次）。
+    let anonymous = false
     sandbox.$api = {
-        me: async () => ({ actor: { node_id: 1, node_type: 'staff', realm: 'staff', roles: ['owner'] },
-            node: { id: 1, type: 'staff', fields: { name: '站长' } } }),
+        me: async () => {
+            if (anonymous) throw new Error('未登录')
+            return { actor: { node_id: 1, node_type: 'staff', realm: 'staff', roles: ['owner'] },
+                node: { id: 1, type: 'staff', fields: { name: '站长' } } }
+        },
         types: async () => ({ types: {} }),
-        loginRealms: async () => ({ realms: [] }),
+        loginRealms: async () => ({ realms: [
+            { name: 'member', node_type: 'member', default: true },
+            { name: 'staff', node_type: 'staff' },
+        ] }),
         get: async () => ({ items: [] }),
         post: async () => ({}),
         logout: async () => ({}),
@@ -980,6 +1026,35 @@ async function checkRender() {
         fail('App.vue 挂载报错（浏览器里就是白屏）: ' + renderErrors.join(' / '))
     } else {
         pass('App.vue 能挂载（setup 与模板都不抛错）')
+    }
+
+    // ⑮ 登录页的**渠道下拉**: 未认证时渲染, 每个选项都要有 label/value。
+    //
+    // 真实踩过: 模板里还写着 v2 的 `r.realm`, 而后端返回的是 `name` ⇒ 选项
+    // label/value 全是 undefined ⇒ 下拉一片空白（而且选中值也对不上任何选项）。
+    anonymous = true   // 切到"未登录": me() 失败 ⇒ 渲染登录页
+    renderErrors.length = 0
+    let loginHost
+    try {
+        loginHost = mount(App.default || App, {}, stubs)
+        // 登录页要等两段异步: me() 拒 → phase=login → 再拉渠道清单
+        await tick(); await tick(); await tick()
+    } catch (err) {
+        renderErrors.push(err && err.message ? err.message : String(err))
+    }
+    const realmOptions = loginHost ? walk(loginHost).filter(n => n.tag === 'el-option') : []
+    const realmLabels = realmOptions.map(o => String(o.props.label === undefined ? '' : o.props.label))
+    if (renderErrors.length) {
+        fail('登录页挂载报错: ' + renderErrors.join(' / '))
+    } else if (realmOptions.length !== 2) {
+        fail('登录渠道下拉该有 2 个选项, 实际 ' + realmOptions.length)
+    } else if (realmLabels.some(l => !l || l === 'undefined')) {
+        fail('登录渠道选项没有 label（字段名对不上? 后端返回的是 name / node_type / default）: ' +
+            JSON.stringify(realmOptions.map(o => o.props)))
+    } else if (realmOptions.some(o => o.props.value === undefined)) {
+        fail('登录渠道选项没有 value: ' + JSON.stringify(realmOptions.map(o => o.props)))
+    } else {
+        pass('登录渠道下拉: ' + realmLabels.join(' / '))
     }
 
     return failed
