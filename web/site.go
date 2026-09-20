@@ -116,6 +116,8 @@ func Open(basedir string, opts ...Option) (*Site, error) {
 	defineAdminHooks(engine)
 	site := &Site{basedir: basedir, db: db, types: ts, engine: engine}
 	site.auth = newAuthRegistry(site)
+	// 每个 auth 能力类型自动一条同名渠道（站点显式 Register 覆盖它）
+	site.auth.registerDefaults()
 	site.loginLimiter = newLimiter(defaultLoginFailures, defaultLoginWindow)
 	site.uploadLimit = defaultUploadLimit
 	site.router = cho.New(site.CmsCtxMaker) // 空 router: 路由留到 Setup

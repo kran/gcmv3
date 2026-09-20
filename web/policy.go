@@ -290,6 +290,24 @@ func (c *CmsCtx) authorizeDelete(node *core.Node) error {
 	return c.site.policy(node.Type).OnDelete(c, node)
 }
 
+// rolesOnlyOwner roles 是**提权面**（它决定谁是 owner/admin）: 只有 owner 能写。
+//
+// 这是框架不变量, 不是站点规则 —— roles 字段本身就由框架按 authentication 能力注入
+// （见 types.injectAuthRoles），所以"谁能改它"也该由框架兜住: 每个站点各写一遍,
+// 漏一次就是提权洞（admin 给自己加 owner）。
+//
+// 实现放在校验点而不是"从 grant 里删掉": 站点可能给管理角色授了 "*", 而 v3 没有
+// deny 语义（故意不引入优先级地狱）—— 在提交字段这一步拦掉, "*" 也绕不过去。
+func (c *CmsCtx) rolesOnlyOwner(typeName, field string) bool {
+	if field != types.RolesField {
+		return false
+	}
+	if _, ok := c.site.types.AuthMethods(typeName); !ok {
+		return false // 该类型没有 roles 字段（不是 auth 类型）
+	}
+	return !c.Actor().IsOwner()
+}
+
 // checkWritable 白名单: 客户端提交的字段必须**既可写又可读**。
 //
 //	可写 —— 规则把它（或 "*"）授予了当前角色; 一个都没授予 = 没有授权这个动作（403）
@@ -311,6 +329,8 @@ func (c *CmsCtx) checkWritable(typeName string, submitted []string, allow *Grant
 		switch {
 		case slices.Contains(hidden, name):
 			rejected = addRejected(rejected, name, "对当前身份不可见")
+		case c.rolesOnlyOwner(typeName, name):
+			rejected = addRejected(rejected, name, "只有 owner 能改角色")
 		case !allow.Has(roles, name):
 			rejected = addRejected(rejected, name, "对当前身份不可写")
 		}

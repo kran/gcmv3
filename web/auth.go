@@ -73,15 +73,33 @@ type AuthRealm struct {
 
 // AuthRegistry 站点的渠道声明（配置期注册; 启动后冻结）。
 type AuthRegistry struct {
-	site         *Site
-	realms       map[string]AuthRealm
+	site   *Site
+	realms map[string]AuthRealm
+	// auto 哪些渠道是**框架自动注册**的（每个 auth 能力类型一条同名渠道）——
+	// 站点显式 Register 会覆盖它们; 两条显式渠道重名仍然 panic。
+	auto         map[string]bool
 	defaultRealm string
 }
 
 var authRealmName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
 func newAuthRegistry(site *Site) *AuthRegistry {
-	return &AuthRegistry{site: site, realms: map[string]AuthRealm{}}
+	return &AuthRegistry{site: site, realms: map[string]AuthRealm{}, auto: map[string]bool{}}
+}
+
+// registerDefaults 给每个声明了 authentication 能力的类型自动注册一条**同名渠道**。
+//
+// 为什么这样做: "类型声明了能登录" 是站点的明确意图（authentication 词表就在
+// types.yaml 里），那么"有一条能用的登录入口"是自然推论 —— 否则类型声明了却登不
+// 进来（每个站点都要记得写一遍 Auth().Register, 漏了就是"后台登录不了"）。
+//
+// 站点显式 Register 会**覆盖**它（补 RegisterMethods / Default 等）; 名字 = 类型名,
+// 一个概念一个名字（/api/auth/staff/login 一眼知道是谁）。
+func (r *AuthRegistry) registerDefaults() {
+	for _, typeName := range r.site.types.AuthTypes() {
+		r.realms[typeName] = AuthRealm{Name: typeName, NodeType: typeName}
+		r.auto[typeName] = true
+	}
 }
 
 // Register 声明一条渠道。配置错了就 panic: 带着一条含糊的认证映射启动, 比起不来更糟。
@@ -92,9 +110,10 @@ func (r *AuthRegistry) Register(realm AuthRealm) {
 	if !authRealmName.MatchString(realm.Name) {
 		panic(fmt.Sprintf("web: auth realm name %q must match %s", realm.Name, authRealmName))
 	}
-	if _, exists := r.realms[realm.Name]; exists {
+	if _, exists := r.realms[realm.Name]; exists && !r.auto[realm.Name] {
 		panic("web: duplicate auth realm " + realm.Name)
 	}
+	delete(r.auto, realm.Name) // 覆盖掉自动那条 ⇒ 之后重名就是真重名
 	def, ok := r.site.types.Type(realm.NodeType)
 	if !ok {
 		panic(fmt.Sprintf("web: auth realm %q: node type %q not defined", realm.Name, realm.NodeType))
@@ -109,6 +128,13 @@ func (r *AuthRegistry) Register(realm AuthRealm) {
 			panic(fmt.Sprintf("web: auth realm %q: register methods must be non-empty and unique", realm.Name))
 		}
 		seen[method] = true
+		// 自助注册不能开一个"框架不管的口令方式": 声明在类型的 authentication.methods
+		// 里才算框架管（否则注册出来的凭据没人核验, 用户以为自己注册成功了）。
+		if !r.site.types.HasAuthMethod(realm.NodeType, method) {
+			panic(fmt.Sprintf(
+				"web: auth realm %q: register method %q 未声明在类型 %q 的 authentication.methods 里",
+				realm.Name, method, realm.NodeType))
+		}
 	}
 	if realm.Default && r.defaultRealm != "" {
 		panic(fmt.Sprintf("web: auth realms %q and %q are both default", r.defaultRealm, realm.Name))

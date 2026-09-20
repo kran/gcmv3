@@ -99,6 +99,11 @@ func (c *CmsCtx) editableFields(node *core.Node, rawFields core.Fields, patch *c
 		if slices.Contains(hidden, field.Name) {
 			continue // 不该发生（可写 ⊆ 可读）; 真出现了也不让它进可写集合
 		}
+		// 框架不变量与写校验同源: 非 owner 的可写集合里永远没有 roles
+		//（否则界面显示可编辑、一提交却被拒 —— 界面不能撒谎）
+		if c.rolesOnlyOwner(node.Type, field.Name) {
+			continue
+		}
 		if allow.Has(roles, field.Name) {
 			out = append(out, field.Name)
 		}

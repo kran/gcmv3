@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -32,12 +33,71 @@ const (
 // systemRoles 内核保留角色（顺序稳定，避免 options 抖动）。
 func systemRoles() []string { return []string{RoleOwner, RoleAdmin} }
 
-// AuthenticationCapability 认证能力：该类型可以登录，角色词表见 Roles。
+// PasswordMethods 框架内置的**口令类**登录方式（不声明 authentication.methods 时的默认）。
 //
-// 词表是角色名的**唯一声明处** —— 权限映射（grant）里引用的角色必须出现在这里，
-// 否则加载期报错（打错一个字母不能静默变成"没人有权限"）。
+// 三者对框架是一回事: 凭据里 data.password 存在就能登录（identifier 分别是邮箱/手机号/
+// 用户名 —— 框架不做格式校验, 它不解释标识）。
+var PasswordMethods = []string{"email", "phone", "username"}
+
+// AuthenticationCapability 认证能力：该类型可以登录。
+//
+// 两个词表都是**唯一声明处**, 打错一个字母不静默:
+//
+//	Roles    角色词表（权限映射 grant 里引用的角色必须出现在这里）
+//	Methods  框架管理的**口令类**登录方式（不写 = PasswordMethods）
+//
+// Methods 只管"框架能写/能核验"的那些: 口令类的凭据写入（注册/绑定/后台设置）
+// 与口令登录都按它校验。插件自己的登录机制（微信/SMS/SSO）**不列进来** ——
+// 那些凭据由插件自己写、自己核验, 框架只负责列出与解绑（口径: "口令内置,
+// 插件只服务站点特有的外部身份源"）。
 type AuthenticationCapability struct {
-	Roles []string `yaml:"roles" json:"roles"`
+	Roles   []string `yaml:"roles" json:"roles"`
+	Methods []string `yaml:"methods,omitempty" json:"methods,omitempty"`
+}
+
+// AuthMethods 该类型**框架管理的口令类登录方式**（已并入默认值）。
+//
+// 第二个返回值 = 这个类型能不能登录（声明了 authentication 能力）。
+func (t *Types) AuthMethods(typeName string) ([]string, bool) {
+	td, ok := t.defs[typeName]
+	if !ok || td.Capabilities.Authentication == nil {
+		return nil, false
+	}
+	declared := td.Capabilities.Authentication.Methods
+	if len(declared) == 0 {
+		out := make([]string, len(PasswordMethods))
+		copy(out, PasswordMethods)
+		return out, true
+	}
+	out := make([]string, len(declared))
+	copy(out, declared)
+	return out, true
+}
+
+// HasAuthMethod 该类型是否声明了某个口令类方式。
+func (t *Types) HasAuthMethod(typeName, method string) bool {
+	methods, ok := t.AuthMethods(typeName)
+	if !ok {
+		return false
+	}
+	for _, name := range methods {
+		if name == method {
+			return true
+		}
+	}
+	return false
+}
+
+// AuthTypes 声明了 authentication 能力的类型名（字典序稳定输出）。
+func (t *Types) AuthTypes() []string {
+	out := []string{}
+	for name, td := range t.defs {
+		if td.Capabilities.Authentication != nil {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // injectAuthRoles 给声明了 authentication 的类型自动注入 roles 字段。
@@ -51,6 +111,9 @@ func injectAuthRoles(defs map[string]TypeDef) error {
 			continue
 		}
 		if err := validateAuthRoles(typeName, capability.Roles); err != nil {
+			return err
+		}
+		if err := validateAuthMethods(typeName, capability.Methods); err != nil {
 			return err
 		}
 		for _, role := range capability.Roles {
@@ -72,6 +135,27 @@ func injectAuthRoles(defs map[string]TypeDef) error {
 			Options: append(systemRoles(), capability.Roles...),
 		})
 		defs[typeName] = td
+	}
+	return nil
+}
+
+// validateAuthMethods 口令类方式校验：无空项/空白、无重复、长度上限。
+//
+// 空 = 用默认（PasswordMethods），不是错误。
+func validateAuthMethods(typeName string, methods []string) error {
+	seen := make(map[string]bool, len(methods))
+	for _, method := range methods {
+		switch {
+		case strings.TrimSpace(method) != method || method == "":
+			return fmt.Errorf("types: type %q: authentication.methods 里的 %q 不合法（空或含首尾空白）", typeName, method)
+		case strings.ContainsAny(method, " \n\r\t"):
+			return fmt.Errorf("types: type %q: authentication.methods 里的 %q 含空白/控制字符", typeName, method)
+		case len([]rune(method)) > maxRoleNameLen:
+			return fmt.Errorf("types: type %q: authentication.methods 里的 %q 超过 %d 个字符", typeName, method, maxRoleNameLen)
+		case seen[method]:
+			return fmt.Errorf("types: type %q: authentication.methods 里的 %q 重复", typeName, method)
+		}
+		seen[method] = true
 	}
 	return nil
 }
