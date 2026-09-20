@@ -38,6 +38,13 @@ window.$api = {
     refLabel: function (n, def) {
         if (!n) { console.log('[refLabel] null node'); return '#?' }
         if (n.label) return n.label
+        // ① 类型**显式声明**的显示名字段（types.yaml 的 admin.display）—— 最可靠
+        const declared = ((def || {}).admin || {}).display
+        if (declared) {
+            const value = (n.fields || {})[declared]
+            if (typeof value === 'string' && value.trim()) return value
+        }
+        // ② 退到 admin.columns 里第一个非空标量（"猜" —— 声明了 display 就不该走到这）
         const cols = ((def || {}).admin || {}).columns || []
         for (const name of cols) {
             const v = (n.fields || {})[name]

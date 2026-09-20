@@ -1061,15 +1061,25 @@ async function checkRender() {
     //    真实踩过: 引用列显示成 "#61 #61"（refLabel 兜底 `#id` + refOption 又缀了 ` #61`）。
     //    这条放在最后: 它加载真实的 js/api.js（会覆盖前面的 $api 桩）。
     vm.runInContext(read(path.join(ADMIN_DIR, 'js/api.js')), sandbox, { filename: 'api.js' })
+    // ① columns 第一列就是显示名时（常见）: 取它
     const realLabel = sandbox.$api.refLabel(
         { id: 61, type: 'category',
           fields: { address: 'about', name: '我会简介', position: 4 } },
         { admin: { columns: ['name', 'address'] }, fields: [{ name: 'name', kind: 'text' }] })
-    if (realLabel !== '我会简介') {
+    // ② **声明了 admin.display** 时它优先: 这里 columns 第一列是 address（不是显示名）,
+    //    没这条就会显示成 "about #61" —— 真实站点正是靠 display 才拿到"我会简介"。
+    const declaredLabel = sandbox.$api.refLabel(
+        { id: 61, type: 'category',
+          fields: { address: 'about', name: '我会简介', position: 4 } },
+        { admin: { display: 'name', columns: ['address', 'position'] },
+          fields: [{ name: 'name', kind: 'text' }, { name: 'address', kind: 'address' }] })
+    if (declaredLabel !== '我会简介') {
+        fail('admin.display 该优先于 admin.columns, 实际 ' + JSON.stringify(declaredLabel))
+    } else if (realLabel !== '我会简介') {
         fail('引用标签该取 admin.columns 里的 name, 实际 ' + JSON.stringify(realLabel) +
             '（引用列只显示 #id 就是这个兜底被触发了）')
     } else {
-        pass('引用标签: ' + realLabel)
+        pass('引用标签: display 优先（' + declaredLabel + '）、columns 兜底（' + realLabel + '）')
     }
 
 

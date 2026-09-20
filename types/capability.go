@@ -3,6 +3,8 @@ package types
 import (
 	"fmt"
 	"maps"
+	"sort"
+	"strings"
 )
 
 const (
@@ -75,6 +77,18 @@ func (t *Types) validateTypeConfig(typeName string, td TypeDef) error {
 			return err
 		}
 	}
+	if td.Admin.Display != "" {
+		// 显示名字段必须是**文本类标量**: 指向一张图片/一个引用的话, 界面上就是
+		// 一串路径或一个对象 —— 那是配置错, 当场报, 别等到界面上一片 #id 才发现。
+		def, err := field(td.Admin.Display)
+		if err != nil {
+			return err
+		}
+		if !displayNameKinds[def.Kind] {
+			return fmt.Errorf("types: type %q: admin.display = %q (kind %s) 不能当显示名 —— "+
+				"只有文本类字段可以（%s）", typeName, td.Admin.Display, def.Kind, displayNameKindList())
+		}
+	}
 	for _, name := range td.Admin.Columns {
 		if IsNodeColumn(name) && name != "fields" {
 			continue
@@ -84,6 +98,27 @@ func (t *Types) validateTypeConfig(typeName string, td TypeDef) error {
 		}
 	}
 	return nil
+}
+
+// displayNameKinds 能当显示名的 kind。
+//
+// 为什么不用 QueryOps.Text 判定: select 的值也是字符串、也能当显示名, 但它不该被
+// contains 检索（那是它没有 Text 能力的原因）—— 两件事别混。
+var displayNameKinds = map[string]bool{
+	KindText:     true,
+	KindTextarea: true,
+	KindSelect:   true,
+	KindAddress:  true,
+	KindRichtext: true,
+}
+
+func displayNameKindList() string {
+	kinds := make([]string, 0, len(displayNameKinds))
+	for kind := range displayNameKinds {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	return strings.Join(kinds, " / ")
 }
 
 func cloneValue(value any) any {

@@ -38,7 +38,7 @@ type SearchableCapability struct {
 	Fields []string `yaml:"fields" json:"fields"`
 }
 
-// AdminView 仅影响后台展示，不参与数据校验和公开策略。
+// AdminView 仅影响**展示**，不参与数据校验和公开策略（Display/Columns/Tree 都是）。
 type AdminView struct {
 	View string `yaml:"view,omitempty" json:"view,omitempty"`
 	// Label 后台显示名; 空 = 回退类型名（配置键）。字段级已有 FieldDef.Label，这里管的是"类型"。
@@ -47,6 +47,12 @@ type AdminView struct {
 	Group   string   `yaml:"group,omitempty" json:"group,omitempty"`
 	Icon    string   `yaml:"icon,omitempty" json:"icon,omitempty"`
 	Columns []string `yaml:"columns,omitempty" json:"columns,omitempty"`
+	// Display 哪个字段是节点的**显示名**（引用列、选择器回显、树标签都读它）。
+	//
+	// 是**展示声明**, 不是语义能力 —— 不参与校验/查询/公开策略（和 Columns/Tree 同类）。
+	// 不声明也能跑: 前端会退到 Columns 里第一个非空标量、再到字段声明序 —— 但那都是**猜**,
+	// 猜不到就只剩 `#id`（引用列显示成 #61 就是这个）。
+	Display string `yaml:"display,omitempty" json:"display,omitempty"`
 	// Tree 后台树视图用哪个字段当父（**展示提示**，不是语义能力：自引用 ref 也可能是
 	// "相关文章" ⇒ 不做自动推导）。配合 View: "tree" 使用。
 	Tree string `yaml:"tree,omitempty" json:"tree,omitempty"`

@@ -1,6 +1,7 @@
 package types
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,5 +26,34 @@ func TestTimeColumnQueryValues(t *testing.T) {
 		if err := field.Validate(bad); err == nil {
 			t.Fatalf("%#v 应当被拒（时间列查询值只收整数秒）", bad)
 		}
+	}
+}
+
+// admin.display: 必须是声明过的、且能当显示名的字段（文本类标量）。
+func TestAdminDisplayField(t *testing.T) {
+	load := func(display string) error {
+		ts := New()
+		return ts.Load([]byte(`
+types:
+  article:
+    admin: { display: ` + display + ` }
+    fields:
+      - { name: name, kind: text }
+      - { name: state, kind: select, options: [draft, published] }
+      - { name: cover, kind: upload-image }
+`))
+	}
+	// 能当显示名的: 文本类标量（text / textarea / select / address / richtext）
+	for _, good := range []string{"name", "state"} {
+		if err := load(good); err != nil {
+			t.Fatalf("display=%s 应当通过: %v", good, err)
+		}
+	}
+	// 图片/引用/数字 这些当显示名就是配置错 —— 界面上会是一串路径或一个对象
+	if err := load("cover"); err == nil || !strings.Contains(err.Error(), "不能当显示名") {
+		t.Fatalf("display=cover 应当被拒: %v", err)
+	}
+	if err := load("nope"); err == nil || !strings.Contains(err.Error(), "not defined") {
+		t.Fatalf("display 指向没声明的字段应当被拒: %v", err)
 	}
 }
