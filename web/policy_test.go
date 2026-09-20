@@ -16,6 +16,7 @@ const policyTypesYAML = `
 types:
   article:
     capabilities: { addressable: true }
+    admin: { display: title, columns: [title, state] }   # 显示名声明（extra.display 读它）
     fields:
       - { name: title, kind: text }
       - { name: state, kind: select, options: [draft, published], default: draft }

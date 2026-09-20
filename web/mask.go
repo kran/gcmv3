@@ -10,6 +10,10 @@
 //     隐藏字段也从可筛选集合里拿掉, 那要另一套机制）; 换来的是一致性: 掩码与查询
 //     解耦, 同一个读规则不会因为"换了个排序"而行为不同。
 //   - 只读: 输入节点永不被就地修改; 需要裁剪时返回拷贝, 不需要时原样返回。
+//     （例外: 免拷贝那条路上会就地补 Extra 显示名 —— 那是附加数据, 不删任何字段。）
+//
+// 顺手做的第三件事: 补节点显示名（extra.display, 见 label.go）—— 这个函数是
+// **节点跨出进程的唯一关口**, 放这里所有出口都自动有, 不会有"某条路忘了补"。
 package web
 
 import "maps"
@@ -32,6 +36,10 @@ func (c *CmsCtx) MaskNode(node *core.Node) (*core.Node, error) {
 		return nil, err
 	}
 	if len(hidden) == 0 && !expandChanged {
+		// 就地补显示名（Extra 是附加数据: 字段本身不动）。放这里是因为它是**节点
+		// 跨出进程的唯一关口** —— 读入口、写响应、登录、/api/auth/me、站点自己的
+		// handler 都经过它, 不会有"某条路忘了补"。
+		c.labelNode(node)
 		return node, nil
 	}
 	out := *node
@@ -46,6 +54,11 @@ func (c *CmsCtx) MaskNode(node *core.Node) (*core.Node, error) {
 	if expandChanged {
 		out.Expand = expand
 	}
+	// 拷贝路径上 Extra 也是共用的 ⇒ 换一份再写（MaskNode 承诺不改入参）
+	extra := make(map[string]any, len(node.Extra)+1)
+	maps.Copy(extra, node.Extra)
+	out.Extra = extra
+	c.labelNode(&out)
 	return &out, nil
 }
 

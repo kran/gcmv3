@@ -51,7 +51,7 @@
                 :tree-props="{ children: 'children' }" default-expand-all>
         <el-table-column label="ID" width="80">
           <template #default="{ row: r }">
-            <a class="node-title-link" @click.prevent="openEdit(r)">{{ r.id }}</a>
+            <a class="node-title-link" @click.prevent="openEdit(r)">#{{ r.id }}</a>
           </template>
         </el-table-column>
         <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>
@@ -75,7 +75,7 @@
              显示什么完全由 types 的 admin.columns 决定） -->
         <el-table-column label="ID" width="80">
           <template #default="{ row: r }">
-            <a class="node-title-link" @click.prevent="openEdit(r)">{{ r.id }}</a>
+            <a class="node-title-link" @click.prevent="openEdit(r)">#{{ r.id }}</a>
           </template>
         </el-table-column>
         <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>

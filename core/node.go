@@ -118,7 +118,8 @@ type Node struct {
 
 	// Expand 引用展开容器（typed Expand 填充 — 不落库）: map[路径 key] → *Node / []*Node
 	Expand map[string]any `db:"-" json:"expand,omitempty"`
-	// Extra 渲染期附加数据（HookNodeEnrich 填充 — 不落库）: url 注入、高亮等
+	// Extra 渲染期附加数据（**不落库**, 谁填由 web 决定 —— 例如显示名 extra.display）:
+	// url 注入、高亮等。core 只声明这个容器, 从不读它。
 	Extra map[string]any `db:"-" json:"extra,omitempty"`
 
 	// ── 读期事实（web 读层一次算好，随节点下发；引擎与写入路径不关心）──
