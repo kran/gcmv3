@@ -359,12 +359,10 @@ func (s *Site) saveUpload(body io.Reader, ext string, allowance uploadAllowance)
 
 // uploadReadError 把读取途中的错误翻成对外错误: 请求体超上限 ⇒ 413, 别的 ⇒ 400。
 func uploadReadError(err error) error {
-	var structured *Error
-	if errors.As(err, &structured) {
+	if structured, ok := errors.AsType[*Error](err); ok {
 		return structured
 	}
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 		return Errorf(http.StatusRequestEntityTooLarge, "上传内容过大")
 	}
 	return BadRequest("读取上传内容失败: %s", err.Error())

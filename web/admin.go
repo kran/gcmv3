@@ -15,6 +15,39 @@
 //
 // **界面不在服务端描述**: 字段的 kind 名本身就是界面标识（types 声明说了算）。
 //
+// # 站点面板
+//
+// 后台自带的只有通用能力（类型的增删改查走 /api/nodes、权限矩阵、账号）。站点特有的
+// 管理界面 —— 留言板、报名审核、备份、批量发布 —— 用两个 hook 挂上来, 一共三块:
+//
+//	① 菜单:　HookAdminPanel（每次 /admin/panels 都 Fire ⇒ 可以按库里的状态动态出现/带角标）
+//	② 端点:　HookAdminMount 拿到的是**过了后台门**的路由组, 站点的 API 挂进去就继承了认证
+//	③ 组件:　面板的 .vue 也挂在这个组里（**面板代码不该公开**）, URL 由 ① 的 Vue 字段给出
+//
+//	site.Hook(web.HookAdminPanel, func(ctx *web.CmsCtx, panels *core.List[web.AdminPanel]) error {
+//		pending, err := countPending(ctx)   // 真正查一次库
+//		if err != nil || pending == 0 { return err }
+//		panels.Append(web.AdminPanel{
+//			Path: "/review", Title: "内容审核", Vue: "/admin/review/panel.vue",
+//		})
+//		return nil
+//	})
+//	site.Hook(web.HookAdminMount, func(g *cho.Cho[*web.CmsCtx]) error {
+//		g.Get("/review/pending", func(ctx *web.CmsCtx) { /* ctx.List(...) */ })
+//		g.Get("/review/panel.vue", func(ctx *web.CmsCtx) { ctx.String(200, vueSource) })
+//		return nil
+//	})
+//
+// 前端不需要任何改动: App.vue 会拉 /admin/panels、动态注册路由与菜单项, 再用
+// vue3-sfc-loader 现拉现编译那个 .vue（所以面板也没有构建步骤）。
+//
+// 两条要点:
+//
+//	· 面板里的节点读写**走受管入口**（ctx.List / ctx.Get / ctx.Create / ctx.Update /
+//	  ctx.Delete）, 策略照旧生效 —— 后台不是特权通道。唯一例外是"系统自己的写"
+//	  （导入、迁移、清理）, 那才直接调引擎。
+//	· 面板的数据接口用 web.Error / ctx.Fail 报错即可, 形状与 /api/nodes 一致。
+//
 // 界面资源 embed 进二进制 —— 界面版本与 Go 代码永不脱节（部署只有一个文件）。
 package web
 
