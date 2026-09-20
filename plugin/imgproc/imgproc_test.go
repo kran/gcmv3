@@ -36,7 +36,7 @@ types:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = site.Close() })
-	Mount(site)
+	Mount(site, Options{})
 	site.Setup() // 建 static/uploads 目录
 	return site, basedir
 }
@@ -98,7 +98,7 @@ func TestServeOriginalWithoutParams(t *testing.T) {
 func TestServeResized(t *testing.T) {
 	site, basedir := newSite(t)
 	url := writePNG(t, basedir, "b.png", 120, 60)
-	got := fetch(t, site, url+"?w=60")
+	got := fetch(t, site, url+"?x-oss-process=image/resize,w_60")
 	if got.Code != http.StatusOK {
 		t.Fatalf("缩放 = %d %q", got.Code, got.Body.String())
 	}
@@ -114,13 +114,13 @@ func TestServeResized(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("缓存目录 = %v (%v)", entries, err)
 	}
-	// 缓存名用的是**请求参数**（w=60,h 缺省 ⇒ 60x0）, 不是解析后的尺寸 ——
+	// 缓存名用的是**请求参数**（w_60, h 缺省 ⇒ 60x0）, 不是解析后的尺寸 ——
 	// 这样缓存命中判断不必先解码原图。同一组参数 ⇒ 同一个缓存文件。
-	if entries[0].Name() != "60x0-cover-b.png" {
+	if entries[0].Name() != "lfit-60x0-b.png" {
 		t.Fatalf("缓存文件名叫法变了: %q", entries[0].Name())
 	}
 	// 再请求: 还是这个结果（走缓存; 内容一致）
-	again := fetch(t, site, url+"?w=60")
+	again := fetch(t, site, url+"?x-oss-process=image/resize,w_60")
 	if again.Code != http.StatusOK || !bytes.Equal(got.Body.Bytes(), again.Body.Bytes()) {
 		t.Fatal("第二次请求该走缓存且结果一致")
 	}
@@ -135,10 +135,10 @@ func TestServeModes(t *testing.T) {
 		width  int
 		height int
 	}{
-		{"?w=40&h=20&mode=crop", 40, 20},
-		{"?w=40&h=20&mode=fit", 20, 20},   // 等比放进 40x20 的框 ⇒ 20x20
-		{"?w=40&h=20&mode=cover", 40, 20}, // 填充裁剪 ⇒ 正好 40x20
-		{"?w=30&fmt=jpg", 30, 30},         // 转 jpg 也放大成功（尺寸按比例）
+		{"?x-oss-process=image/resize,w_40,h_20,m_fill", 40, 20}, // 填满并裁剪 ⇒ 正好
+		{"?x-oss-process=image/resize,w_40,h_20,m_lfit", 20, 20}, // 等比放进框（小图不放大小 ✗
+		{"?x-oss-process=image/resize,w_40", 40, 40},             // 只给一边 ⇒ 按比例
+		{"?x-oss-process=image/resize,h_20", 20, 20},             // 只给 h 同理
 		{"?x-oss-process=image/resize,w_50,m_lfit", 50, 50},
 	}
 	for _, test := range cases {
@@ -160,7 +160,7 @@ func TestServeModes(t *testing.T) {
 func TestServeInvalidParams(t *testing.T) {
 	site, basedir := newSite(t)
 	url := writePNG(t, basedir, "d.png", 40, 40)
-	for _, query := range []string{"?w=0", "?w=99999", "?mode=nope&w=10", "?fmt=gif&w=10", "?x-oss-process=image/nope"} {
+	for _, query := range []string{"?x-oss-process=image/resize,w_0", "?x-oss-process=image/resize,w_99999", "?mode=nope&w=10", "?fmt=gif&w=10", "?x-oss-process=image/nope"} {
 		got := fetch(t, site, url+query)
 		if got.Code != http.StatusBadRequest {
 			t.Fatalf("%s = %d %q", query, got.Code, got.Body.String())
@@ -181,7 +181,7 @@ func TestServeUnsupportedFormatFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fetch(t, site, "/uploads/fake.png?w=10")
+	got := fetch(t, site, "/uploads/fake.png?x-oss-process=image/resize,w_10")
 	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "not an image") {
 		t.Fatalf("不支持处理时该原图直出: %d %q", got.Code, got.Body.String())
 	}
@@ -190,4 +190,69 @@ func TestServeUnsupportedFormatFallsBack(t *testing.T) {
 func decodeAny(raw []byte) (image.Image, error) {
 	img, _, err := image.Decode(bytes.NewReader(raw))
 	return img, err
+}
+
+// 旧参数**响亮报错**（静默忽略 = 页面正常但图没处理, 最难查）。
+func TestLegacyParamsRejected(t *testing.T) {
+	site, basedir := newSite(t)
+	url := writePNG(t, basedir, "legacy.png", 120, 60)
+	for _, legacy := range []string{"?w=60", "?h=60", "?mode=cover", "?fmt=jpg", "?w=60&h=60&mode=crop"} {
+		got := fetch(t, site, url+legacy)
+		if got.Code != http.StatusBadRequest {
+			t.Fatalf("%s 该 400（旧参数已移除）, 实际 %d: %s", legacy, got.Code, got.Body.String())
+		}
+		if !strings.Contains(got.Body.String(), "x-oss-process") {
+			t.Fatalf("错误信息该给出正确写法: %s", got.Body.String())
+		}
+	}
+}
+
+// m_fill 必须两边都给（只给一边推出来的是 lfit 的形状 —— 猜不如报错）。
+func TestFillRequiresBothSides(t *testing.T) {
+	site, basedir := newSite(t)
+	url := writePNG(t, basedir, "fill.png", 120, 60)
+	got := fetch(t, site, url+"?x-oss-process=image/resize,w_40,m_fill")
+	if got.Code != http.StatusBadRequest {
+		t.Fatalf("m_fill 缺 h_ 该 400, 实际 %d", got.Code)
+	}
+	// 不支持的 m_ 也要报错（只支持 lfit / fill）
+	got = fetch(t, site, url+"?x-oss-process=image/resize,w_40,h_40,m_cover")
+	if got.Code != http.StatusBadRequest {
+		t.Fatalf("m_cover 该 400（只支持 lfit/fill —— cover 是旧口径）, 实际 %d", got.Code)
+	}
+}
+
+// URL() / ProcessQuery(): 模板拼地址用（本地与 OSS 只差配置）。
+func TestURLBuilder(t *testing.T) {
+	cases := []struct {
+		width, height int
+		mode          string
+		want          string
+	}{
+		{300, 0, "lfit", "?x-oss-process=image/resize,w_300,m_lfit"},
+		{300, 200, "fill", "?x-oss-process=image/resize,w_300,h_200,m_fill"},
+		{300, 200, "cover", "?x-oss-process=image/resize,w_300,h_200"}, // 旧名不认 ⇒ 不带 m_
+		{0, 0, "lfit", ""}, // 没尺寸 = 原图
+	}
+	for _, c := range cases {
+		if got := ProcessQuery(c.width, c.height, c.mode); got != c.want {
+			t.Errorf("ProcessQuery(%d,%d,%q) = %q, 期望 %q", c.width, c.height, c.mode, got, c.want)
+		}
+	}
+	// 没装插件也要能拼（模板不该依赖装没装）
+	if got := URL("uploads/a.jpg", 300, 0, "lfit"); got != "/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
+		t.Errorf("URL() = %q", got)
+	}
+}
+
+// 配了 BaseURL ⇒ 本地不挂 hook（交给远端处理）, URL() 带上前缀。
+func TestBaseURLSkipsLocalProcessing(t *testing.T) {
+	site, _ := newSite(t)
+	Mount(site, Options{BaseURL: "https://bucket.example.com/"})
+	t.Cleanup(func() { mounted = nil })
+	if got := URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
+		"https://bucket.example.com/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
+		t.Fatalf("配了 BaseURL 的 URL() = %q", got)
+	}
+	mounted = nil
 }
