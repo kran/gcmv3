@@ -15,6 +15,8 @@ import (
 	"fmt"
 	"strings"
 
+	"maps"
+
 	"github.com/kran/dba"
 	"github.com/kran/gcmv3/types"
 )
@@ -90,6 +92,9 @@ func (s *GCM) CreateNode(db *dba.SQL, n *Node) (int64, error) {
 		if err != nil {
 			return invalidFields(err)
 		}
+		// 类型内唯一键: 用**原始输入字段**算（此刻引用还在里面, 且校验保证它是 id）——
+		// 必须在 splitFields 之前: 拆分把引用从 fields 里拿走（落到 edges 表）。
+		node.Uniq = s.projectUniq(td, node.Fields)
 		scalar, refs, err := splitFields(td, s.types, node.Fields)
 		if err != nil {
 			return err
@@ -97,14 +102,6 @@ func (s *GCM) CreateNode(db *dba.SQL, n *Node) (int64, error) {
 		node.Fields = scalar
 		// 类型内唯一键: 从**拆分后的视图**算（引用 id 是 splitFields 给现成的 ——
 		// 不额外查库）。任一唯一字段为空 ⇒ nil ⇒ 不参与唯一。
-		view := map[string]any{}
-		for name, value := range scalar {
-			view[name] = value
-		}
-		for name, ids := range refs {
-			view[name] = ids
-		}
-		node.Uniq = s.projectUniq(td, view)
 		result, err := tx.Insert("nodes", &node).Exec()
 		if err != nil {
 			return duplicate(err)
@@ -185,15 +182,8 @@ func (s *GCM) PatchNode(db *dba.SQL, id int64, patch *NodePatch) error {
 		//   改动: 标量用 scalarPatch; 引用用 refPatch（**归一化后的目标 id** ——
 		//         原始值可能是地址, 那会和 create 那条路算出不同的键）
 		view := map[string]any{}
-		for name, value := range existing.Fields {
-			view[name] = value
-		}
-		for name, value := range scalarPatch {
-			view[name] = value
-		}
-		for name, ids := range refPatch {
-			view[name] = ids
-		}
+		maps.Copy(view, existing.Fields) // readNode: 没动的引用 id 已经在 fields 里
+		maps.Copy(view, patch.Fields)    // 动的: 校验同样只收 id
 		cols["uniq"] = s.projectUniq(td, view)
 
 		cols["updated_at"] = nowValue()

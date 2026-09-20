@@ -24,9 +24,11 @@ types:
       - { name: name, kind: text }
       - { name: credit_code, kind: text }
   person:
+    capabilities: { addressable: true }
     fields:
       - { name: name, kind: text }
   company:
+    capabilities: { addressable: true }
     fields:
       - { name: name, kind: text }
   position:
@@ -185,4 +187,37 @@ func ptr64(v int64) *int64 { return &v }
 
 func contains(haystack, needle string) bool {
 	return strings.Contains(haystack, needle)
+}
+
+// 引用只收 id（地址当场拒）⇒ 投影可以直接拿字段视图, 不需要归一化那一步。
+//
+// 这条测试是"为什么不需要 split 之后的值"的证据: 能进到投影的引用值只可能是 id。
+func TestUniqueRefNormalizesAddressAndID(t *testing.T) {
+	gcm := uniqFixture(t)
+	person, err := gcm.CreateNode(nil, &Node{Type: "person", Fields: Fields{
+		"name": "张三", "address": "zhangsan"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	company, err := gcm.CreateNode(nil, &Node{Type: "company", Fields: Fields{
+		"name": "恒新", "address": "hengxin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 第一条: 用 **id**
+	_, err = gcm.CreateNode(nil, &Node{Type: "position", Fields: Fields{
+		"person": person, "company": company, "title": "董事长"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 引用**只能是 id**: 写地址被字段校验当场拒（不静默 —— 否则键里会混进地址,
+	// 同一个目标两种写法算出两个键, 唯一约束形同虚设）
+	_, err = gcm.CreateNode(nil, &Node{Type: "position", Fields: Fields{
+		"person": "zhangsan", "company": "hengxin", "title": "总经理"}})
+	if err == nil {
+		t.Fatal("引用写地址该被拒")
+	}
+	if !strings.Contains(err.Error(), "expects node id") {
+		t.Fatalf("错误信息该点明只收 id: %v", err)
+	}
 }

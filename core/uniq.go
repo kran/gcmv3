@@ -17,7 +17,6 @@ package core
 
 import (
 	"encoding/json"
-	"strconv"
 
 	"github.com/kran/gcmv3/types"
 	"github.com/spf13/cast"
@@ -49,18 +48,12 @@ func (s *GCM) projectUniq(td types.TypeDef, view map[string]any) *string {
 
 // uniqPart 一个部分 → 字符串。
 //
-// 一切转字符串（要的就是这个）: 数字/布尔/文本一视同仁; 引用是目标 id（int64 或
-// []int64 —— 单引用就是单元素, 在这里拆开）。
+// **一切转字符串**: 数字/布尔/文本一视同仁; 引用也是 id（校验保证 —— 字段校验
+// 只收 int64, 地址会被当场拒; 读投影注入的也是 int64）⇒ 这里不需要类型分支。
 //
-// 空字符串 = "没填" ⇒ ok=false（"没填全 = 不约束"）。这条规则只有一处, 所以
+// 空字符串 = "没填" ⇒ ok=false（"没填全 = 不约束"）。规则只有这一处, 所以
 // create 与 patch 不可能对"什么算空"有不同理解。
 func uniqPart(value any) (string, bool) {
-	if ids, ok := value.([]int64); ok {
-		if len(ids) != 1 {
-			return "", false // 多值当唯一键: 类型校验已拒, 这里兜底不约束
-		}
-		return strconv.FormatInt(ids[0], 10), true
-	}
 	text := cast.ToString(value)
 	return text, text != ""
 }
