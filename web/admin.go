@@ -7,6 +7,7 @@
 //	GET  /admin/ui/*        界面资源（公开 —— 登录态由 API 层把关）
 //	GET  /admin/types       类型定义（前端按 field.kind 取 widgets/<kind>.vue 渲染）
 //	GET  /admin/panels      站点/插件注册的面板菜单（每次请求 Fire —— 可响应式查库）
+//	GET  /admin/permissions 权限矩阵（拿身份样本真跑一遍策略, 见 permission.go）
 //	  + HookAdminMount      插件在这里挂自己的受保护端点
 //
 // 登录不走后台自己的端点: 前端登录页调 /api/auth/realms 列渠道、再打
@@ -73,6 +74,7 @@ func (s *Site) setupAdmin() {
 			authed.UseCtx(s.requireAdmin)
 			authed.Get("/types", s.adminTypes)
 			authed.Get("/panels", s.adminPanels)
+			authed.Get("/permissions", s.adminPermissions)
 			err := s.engine.Hooks().Fire(HookAdminMount, authed)
 			if err != nil {
 				panic("web: admin mount: " + err.Error())

@@ -5,7 +5,8 @@
             值来自<b>规则求值</b>（不是照代码猜）：每种身份把读/写规则跑一遍，这里看到的就是运行时真正生效的。
             <b>读</b> = 看得见该字段；<b>建</b> = 新建该类型时可写该字段；<b>改</b> = 改该类型的
             <b>一个真实样本节点</b>时可写该字段（归属相关的规则只对样本成立，样本 id 在身份框的提示里）；
-            <b>删</b> 是节点级权限，没有字段维度。
+            <b>删</b> 是节点级权限，没有字段维度；<b>行范围</b>是读规则收窄出来的行集合
+            （全 / 部分 / 无）—— 与字段可见性是两件事，写错时往往就是它。
         </p>
         <div class="perm-filter">
             <span class="perm-filter-label">身份</span>
@@ -23,6 +24,14 @@
         </div>
         <el-tabs v-model="activeType">
             <el-tab-pane v-for="t in types" :key="t.type" :label="t.label || t.type" :name="t.type">
+                <div class="perm-del">
+                    <span class="perm-filter-label">行范围</span>
+                    <span v-for="s in shownScenes" :key="s.id" class="perm-del-item">
+                        {{ s.label }}<i class="perm-chip" :class="{ on: scopeOf(t, s.id) === 'all' }"
+                            :title="scopeTitle(t, s.id)">{{ scopeLabel(t, s.id) }}</i>
+                    </span>
+                    <span class="perm-hint">读规则收窄出来的行集合：对应读接口能读到哪些节点（与字段可见性是两件事）。</span>
+                </div>
                 <div class="perm-del">
                     <span class="perm-filter-label">删除</span>
                     <span v-for="s in shownScenes" :key="s.id" class="perm-del-item">
@@ -72,6 +81,16 @@ export default {
         shownScenes() { return this.scenes },
     },
     methods: {
+        scopeOf(t, id) { return ((t.scope || {})[id]) || 'none' },
+        scopeLabel(t, id) {
+            return { all: '全', restricted: '部分', none: '无' }[this.scopeOf(t, id)] || '?'
+        },
+        scopeTitle(t, id) {
+            const kind = this.scopeOf(t, id)
+            if (kind === 'all') return '全部行都能读到（规则给的是恒真）'
+            if (kind === 'restricted') return '只能读到满足条件的行'
+            return '一行都读不到（规则给的是恒假, 或者这个类型没有读规则）'
+        },
         rowsOf(type) {
             return this.rows.filter(function (r) { return r.type === type })
         },

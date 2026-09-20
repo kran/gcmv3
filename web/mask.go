@@ -12,6 +12,8 @@
 //   - 只读: 输入节点永不被就地修改; 需要裁剪时返回拷贝, 不需要时原样返回。
 package web
 
+import "maps"
+
 import "github.com/kran/gcmv3/core"
 
 // MaskNode 返回裁剪后的节点。hide 为空时原样返回（不拷贝, 零分配）。
@@ -35,9 +37,7 @@ func (c *CmsCtx) MaskNode(node *core.Node) (*core.Node, error) {
 	out := *node
 	if len(hidden) > 0 {
 		fields := make(map[string]any, len(node.Fields))
-		for name, value := range node.Fields {
-			fields[name] = value
-		}
+		maps.Copy(fields, node.Fields)
 		for _, name := range hidden {
 			delete(fields, name)
 		}
@@ -80,9 +80,7 @@ func (c *CmsCtx) maskExpand(in map[string]any) (map[string]any, bool, error) {
 			return
 		}
 		clone := make(map[string]any, len(in))
-		for key, value := range in {
-			clone[key] = value
-		}
+		maps.Copy(clone, in)
 		out, changed = clone, true
 	}
 	for key, value := range in {
