@@ -69,19 +69,37 @@
 // ── Element Plus: Atlassian 表单风格 (2px 边 + 灰底 + 微圆角) ──
 :root {
     --el-border-radius-base: 0px;
-    --el-border-radius-small: 2px;
-    --el-border-radius-round: 18px;
-    --el-card-border-radius: 3px;
-    --el-dialog-border-radius: 3px;
-    --el-messagebox-border-radius: 3px;
-    --el-popover-border-radius: 3px;
+    --el-border-radius-small: 0px;
+    --el-border-radius-round: 0px;
+    --el-card-border-radius: 0px;
+    --el-dialog-border-radius: 0px;
+    --el-messagebox-border-radius: 0px;
+    --el-popover-border-radius: 0px;
 }
 
 // tag 的圆角**不能**在 :root 里设 —— Element Plus 把它定义在 .el-tag 元素自己身上
 // （`.el-tag{--el-tag-border-radius:4px; border-radius:var(--el-tag-border-radius)}`），
 // 变量就近优先 ⇒ 祖先设的值会被元素自己的声明盖掉。必须写在 .el-tag 上（本文件在 EP
 // 之后加载, 同特异性下后者胜）。
+.el-card { --el-card-border-radius: 0px; }
+.el-message-box { --el-messagebox-border-radius: 0px; }
+.el-pagination { --el-pagination-border-radius: 0px; }
+.el-popover { --el-popover-border-radius: 0px; }
+.el-slider { --el-slider-border-radius: 0px; }
 .el-tag { --el-tag-border-radius: 0px; }
+.el-tour { --el-tour-border-radius: 0px; }
+
+// ── 收口: 剩下的圆角一律平掉 ──
+//
+// 为什么还要这一条（上面已经改了变量）: 变量只能管"用 var() 取圆角"的地方 ——
+//   ① EP 里还有**直接写** `border-radius: Npx` 的（不经过变量）
+//   ② 本文件自己历史遗留了十几处（输入框 3px / 卡片 6px / 药丸 999px …）
+// 与其到处追（追漏一处就是不生效, 而且下次照样漏）, 在这里一次收口。
+// 本文件在 element-plus.css 之后加载 + !important ⇒ 谁都翻不了。
+//
+// 副作用（要的）: 头像/圆点/药丸也一起变方。真想让某个元素保持圆形, 在它自己的
+// 规则里写 `border-radius: 50% !important`（等级相同, 靠后胜）。
+*, *::before, *::after { border-radius: 0 !important; }
 
 // 输入控件: 浅灰底 + 1px 细边（Directus 风格 — 原 2px box-shadow 内框太粗）
 .el-input__wrapper, .el-select__wrapper, .el-textarea__inner {
