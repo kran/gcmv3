@@ -38,11 +38,6 @@ type SearchableCapability struct {
 	Fields []string `yaml:"fields" json:"fields"`
 }
 
-type TreeCapability struct {
-	Parent string `yaml:"parent" json:"parent"`
-	Order  string `yaml:"order,omitempty" json:"order,omitempty"`
-}
-
 // AdminView 仅影响后台展示，不参与数据校验和公开策略。
 type AdminView struct {
 	View string `yaml:"view,omitempty" json:"view,omitempty"`

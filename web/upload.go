@@ -1,4 +1,4 @@
-// 文件上传 —— 落 uploads/, 默认按年月分目录。
+// Package web 文件上传 —— 落 uploads/, 默认按年月分目录。
 //
 //	POST /api/upload    multipart/form-data, 字段名 "file"
 //	→ 200 {"path": "/uploads/2026/09/1789837227-9f3a1c05b7e2d816.png"}

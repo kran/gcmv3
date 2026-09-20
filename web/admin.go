@@ -8,6 +8,7 @@
 //	GET  /admin/types       类型定义（前端按 field.kind 取 widgets/<kind>.vue 渲染）
 //	GET  /admin/panels      站点/插件注册的面板菜单（每次请求 Fire —— 可响应式查库）
 //	GET  /admin/permissions 权限矩阵（拿身份样本真跑一遍策略, 见 permission.go）
+//	GET  /admin/tree/{type} 树视图数据（admin.view: tree 的类型, 见 tree.go）
 //	  + HookAdminMount      插件在这里挂自己的受保护端点
 //
 // 登录不走后台自己的端点: 前端登录页调 /api/auth/realms 列渠道、再打
@@ -108,6 +109,7 @@ func (s *Site) setupAdmin() {
 			authed.Get("/types", s.adminTypes)
 			authed.Get("/panels", s.adminPanels)
 			authed.Get("/permissions", s.adminPermissions)
+			authed.Get("/tree/{type}", s.adminTree)
 			err := s.engine.Hooks().Fire(HookAdminMount, authed)
 			if err != nil {
 				panic("web: admin mount: " + err.Error())

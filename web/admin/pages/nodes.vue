@@ -46,7 +46,31 @@
         </el-button>
       </div>
 
-      <el-table :data="rows" v-loading="loading">
+      <!-- 树视图（admin.view: tree 的类型）: 服务端装好的整棵树, 不分页 -->
+      <el-table v-if="treeMode" :data="treeNodes" v-loading="loading" row-key="id"
+                :tree-props="{ children: 'children' }" default-expand-all>
+        <el-table-column label="标题" min-width="260" show-overflow-tooltip>
+          <template #default="{ row: r }">
+            <a class="node-title-link" @click.prevent="openEdit(r)">{{ titleOf(r) }}</a>
+          </template>
+        </el-table-column>
+        <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>
+          <template #default="{ row: r }">
+            <component v-if="cellOf(c)" :is="cellOf(c)" mode="cell" :model-value="fieldOf2(r, c)"
+                       :field="fieldDef(c)" :node="r" @open-node="openRef" />
+            <span v-else-if="isStruct(c)" class="cell-struct">{{ structSummary(r, c) }}</span>
+            <span v-else class="cell-error">字段 {{ c }} 没有 kind</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="300" fixed="right">
+          <template #default="{ row: r }">
+            <node-ops :node="r" :defs="typeDefs" :type-name="query.type" show-create
+                      :parent-id="r.id" @changed="refresh" />
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-table v-else :data="rows" v-loading="loading">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="标题" min-width="260" show-overflow-tooltip>
           <template #default="{ row: r }"><a class="node-title-link" @click.prevent="openEdit(r)">{{ titleOf(r) }}</a></template>
@@ -69,7 +93,7 @@
         </el-table-column>
       </el-table>
 
-      <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+      <div v-if="!treeMode" style="display:flex;justify-content:flex-end;margin-top:12px;">
         <el-pagination background layout="total, prev, pager, next" :total="total"
                        :page-size="query.size" :current-page="query.page"
                        @current-change="onPageChange" />
@@ -107,6 +131,8 @@ export default {
             rows: [],
             total: 0,
             loading: false,
+            treeMode: false,     // admin.view === 'tree' ⇒ 用树形表（全量不分页）
+            treeNodes: [],
             filters: [],       // 引用筛选: [{field, to, label, options, active, activeLabel}]
             query: { type: '', filter: '', page: 1, size: 25 },
             createVisible: false,
@@ -207,7 +233,10 @@ export default {
             // 类型切换清残留: 筛选表达式是按旧类型的字段填的（对不上新类型, fail-loud 报错）
             this.query.filter = ''
             this.setupFilters(this.typeDefs[t] || {})
-            this.refresh()
+            const def = this.typeDefs[t] || {}
+            this.treeMode = !!(def.admin && def.admin.view === 'tree')
+            if (this.treeMode) this.loadTree()
+            else this.refresh()
         },
         // 引用筛选：类型的每个 ref/refs 字段一项（自引用除外 —— 那种类型的列表本身就是树）。
         // 目标类型声明了 tree capability → 用分类树选（含子树，多字段 AND）；
@@ -277,8 +306,23 @@ export default {
             if (parts.length === 1) return parts[0]
             return '(and ' + parts.join(' ') + ')'
         },
+        // 树模式: 一次装整棵（服务端不受分页上限影响; 读不到的行不进树）。
+        // 排序交给服务端: admin.columns 里的第一个数值字段? 不猜 —— 用列表同一个 sort 约定
+        //（默认内核序）, 需要自定义就在这儿给它一个 sort 串。
+        async loadTree() {
+            if (!this.query.type) return
+            this.loading = true
+            try {
+                const res = await window.$api.tree(this.query.type, '')
+                this.treeNodes = res.items || []
+                this.total = res.total || 0
+            } catch (_) {
+                this.treeNodes = []
+            } finally { this.loading = false }
+        },
         async refresh() {
             if (!this.query.type) return
+            if (this.treeMode) return this.loadTree()
             this.loading = true
             try {
                 const params = { page: this.query.page, size: this.query.size, sort: '-id' }

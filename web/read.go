@@ -72,7 +72,9 @@ func (c *CmsCtx) List(q core.NodeQuery, limit, offset int) ([]*core.Node, int64,
 	if err != nil {
 		return nil, 0, CoreError(err)
 	}
-	if total == 0 {
+	// 计数不编译 ORDER BY ⇒ 空结果时短路会把"排序字段拼错"吞掉（200 + 空列表）。
+	// 有排序就照样走一趟取列表, 让校验发生。
+	if total == 0 && len(q.Sort) == 0 {
 		return nil, 0, nil
 	}
 	nodes, err := c.site.engine.GetNodes(q, limit, offset)

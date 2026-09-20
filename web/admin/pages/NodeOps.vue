@@ -42,10 +42,10 @@ export default {
         parentLabel() {
             return window.$api.refLabel(this.node, this.defs[this.node.type] || null) + ' #' + this.node.id
         },
+        // 树父字段来自 types 的 admin.tree（展示声明）—— 不是 capabilities（没有这个能力）。
         parentField() {
             const def = this.defs[this.typeName || this.node.type] || {}
-            const tree = def.capabilities && def.capabilities.tree
-            return tree ? tree.parent : ''
+            return (def.admin && def.admin.tree) || ''
         },
     },
     props: {

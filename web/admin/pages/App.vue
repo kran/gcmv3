@@ -46,22 +46,6 @@
                     <el-icon :size="15"><component :is="item.icon" /></el-icon>
                     <span>{{ item.label }}</span>
                 </a>
-                <!-- 类型树（tree 类型菜单 — hover 子菜单） -->
-                <el-dropdown v-if="treeMenu.length" trigger="hover" :show-timeout="0" :hide-timeout="0">
-                    <a class="topbar-menu-item" :class="{ active: isTreeActive }">
-                        <el-icon :size="15"><Share /></el-icon>
-                        <span>类型树</span>
-                    </a>
-                    <template #dropdown>
-                        <el-dropdown-menu>
-                            <el-dropdown-item v-for="item in treeMenu" :key="item.key"
-                                @click="router.push({ name: item.route, params: item.params })">
-                                {{ item.label }}
-                            </el-dropdown-item>
-                        </el-dropdown-menu>
-                    </template>
-                </el-dropdown>
-                <!-- 扩展（插件面板菜单 — hover 子菜单） -->
                 <el-dropdown v-if="panelMenu.length" trigger="hover" :show-timeout="0" :hide-timeout="0">
                     <a class="topbar-menu-item" :class="{ active: isPanelActive }">
                         <el-icon :size="15"><Grid /></el-icon>
@@ -127,12 +111,6 @@ export default {
         // 内容管理（第一个普通菜单）单独 — 类型树/扩展插它后边
         var mainBefore = computed(function () { return mainMenu.value.slice(0, 1) })
         var mainAfter = computed(function () { return mainMenu.value.slice(1) })
-        var treeMenu = computed(function () { return menuData.value.filter(function (m) { return m.section === 'tree' }) })
-        var panelMenu = computed(function () { return menuData.value.filter(function (m) { return m.section === 'panel' }) })
-        // 子菜单入口高亮: 当前路由属于该分组时
-        var isTreeActive = computed(function () { return treeMenu.value.some(function (m) { return m.route === route.name }) })
-        var isPanelActive = computed(function () { return panelMenu.value.some(function (m) { return m.route === route.name }) })
-        var globalQ = ref('')
         // 分组菜单（TokenHub 风格）— 静态项按 group 归组; 动态项（tree/panel）归"管理"
         var menuGroups = computed(function () {
             var order = ['平台', '内容', '管理']
@@ -217,22 +195,6 @@ export default {
             }
         }
 
-        // tree 类型独立菜单：Admin View 只控制展示，Tree capability 控制数据语义。
-        async function loadTreeMenus() {
-            try {
-                var res = await $api.types()
-                var defs = res.types || {}
-                Object.keys(defs).forEach(function (t) {
-                    if (!defs[t].admin || defs[t].admin.view !== 'tree') return
-                    var key = 'tree-' + t
-                    var exists = menuData.value.some(function (m) { return m.key === key })
-                    if (exists) return // 重复执行（checkAuth + doLogin 都可能调）不重复 push
-                    menuData.value.push({ key: key, label: t, section: 'tree',
-                        icon: 'Share', route: 'tree', params: { type: t } })
-                })
-            } catch (e) { console.error('[panel] loadTreeMenus failed:', e) }
-        }
-
         // 站点面板: /admin/panels 返回 [{path, title, vue}] — 动态 addRoute + 菜单
         async function loadPanels() {
             try {
@@ -241,7 +203,7 @@ export default {
                     if (!p.vue || !p.path) return
                     var name = 'panel' + p.path.replace(/[^a-zA-Z0-9]/g, '')
                     var exists = menuData.value.some(function (m) { return m.key === name })
-                    if (exists) return // 去重（与 loadTreeMenus 同理）
+                    if (exists) return // 去重（checkAuth 与 doLogin 都可能调到）
                     router.addRoute({ name: name, path: p.path, component: Vue.defineAsyncComponent({
                         loader: function () { return Panel.loadComponent(p.vue) },
                         loadingComponent: { template: '<div style="padding:40px;text-align:center;color:#999;">加载中...</div>' },
@@ -300,8 +262,8 @@ export default {
         return {
             phase: phase, user: user, siteName: siteName, pageTitle: pageTitle, routeViewKey: routeViewKey,
             menuData: menuData, menuGroups: menuGroups, globalQ: globalQ, globalSearch: globalSearch,
-            mainMenu: mainMenu, mainBefore: mainBefore, mainAfter: mainAfter, treeMenu: treeMenu, panelMenu: panelMenu,
-            isTreeActive: isTreeActive, isPanelActive: isPanelActive,
+            mainMenu: mainMenu, mainBefore: mainBefore, mainAfter: mainAfter, panelMenu: panelMenu,
+            isPanelActive: isPanelActive,
             loginForm: loginForm, loginRealms: loginRealms,
             route: route, router: router,
             doLogin: doLogin, doLogout: doLogout,

@@ -27,6 +27,9 @@ window.$api = {
     createNode: function (type, n) { return Panel.post('/api/nodes/' + type, n) },
     updateNode: function (type, id, n) { return Panel.put('/api/nodes/' + type + '/' + id, n) },
     deleteNode: function (type, id) { return Panel.del('/api/nodes/' + type + '/' + id) },
+    // 树视图: 服务端一次把整棵树装好（不受 /api/nodes 的 size 上限影响;
+    // 读规则照旧生效 —— 读不到的行不进树）。sort 同列表: `$sort,-$sort`。
+    tree:       function (type, sort) { return Panel.get('/admin/tree/' + type, sort ? { sort: sort } : {}) },
 
     // refLabel: 节点显示名（任何消费端统一）— 后台列表/引用选择器用。
     // 优先级: 合成节点自带的 label（预置值回显）→ 类型 **admin.columns** 里第一个非空标量
