@@ -17,6 +17,7 @@ import (
 
 	"github.com/kran/dba"
 	"github.com/kran/gcmv3/types"
+	"github.com/spf13/cast"
 )
 
 var (
@@ -95,6 +96,9 @@ func (s *GCM) CreateNode(db *dba.SQL, n *Node) (int64, error) {
 			return err
 		}
 		node.Fields = scalar
+		// 类型内唯一键: 从**拆分后的视图**算（引用 id 是 splitFields 给现成的 ——
+		// 不额外查库）。任一唯一字段为空 ⇒ nil ⇒ 不参与唯一。
+		node.Uniq = s.projectUniq(td, uniqView(scalar, refs))
 		result, err := tx.Insert("nodes", &node).Exec()
 		if err != nil {
 			return duplicate(err)
@@ -124,12 +128,11 @@ func (s *GCM) PatchNode(db *dba.SQL, id int64, patch *NodePatch) error {
 	if patch == nil {
 		return errors.New("core: patch: nil patch")
 	}
-	existing, err := s.nodeRow(db, id)
+	// readNode（不是 nodeRow）: 它会把**引用 id 注入 fields** —— 唯一键里可能是引用,
+	// 而"这次 patch 没动那个引用"是常态 ⇒ 靠它拿到现状, 不用按"动没动"分支。
+	existing, err := s.readNode(db, id)
 	if err != nil {
 		return err
-	}
-	if existing == nil {
-		return ErrNotFound
 	}
 	if len(patch.Fields) == 0 {
 		return nil
@@ -169,6 +172,39 @@ func (s *GCM) PatchNode(db *dba.SQL, id int64, patch *NodePatch) error {
 		}
 		if len(cols) == 0 && len(refPatch) == 0 {
 			return nil
+		}
+
+		// 唯一键: 现有字段视图（readNode 已注入引用 id）叠上这次 patch 的标量,
+		// 引用部分用 patch 里的目标 id（没动的沿用现有的）。同一个 UPDATE 写列 ——
+		// 不会出现"节点改了、键没跟上"的中间态。
+		if len(td.Capabilities.Unique) > 0 {
+			merged := map[string]any{}
+			for name, value := range existing.Fields {
+				merged[name] = value
+			}
+			for name, value := range scalarPatch {
+				merged[name] = value
+			}
+			uniqRefs := map[string][]int64{}
+			for _, name := range td.Capabilities.Unique {
+				if field, ok := types.FieldByName(td, name); ok && s.types.IsRefKind(field.Kind) {
+					if ids, ok := refPatch[name]; ok {
+						uniqRefs[name] = ids // 这次改了它
+						continue
+					}
+					if id := cast.ToInt64(existing.Fields[name]); id > 0 {
+						uniqRefs[name] = []int64{id} // 没动: 沿用现状（readNode 给的 id）
+					}
+				}
+			}
+			view := uniqView(merged, uniqRefs)
+			// 标量部分要以**合并后**的值为准（uniqView 里 merged 已经是合并后的）
+			for _, name := range td.Capabilities.Unique {
+				if field, ok := types.FieldByName(td, name); ok && !s.types.IsRefKind(field.Kind) {
+					view[name] = merged[name]
+				}
+			}
+			cols["uniq"] = s.projectUniq(td, view)
 		}
 
 		cols["updated_at"] = nowValue()

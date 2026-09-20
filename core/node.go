@@ -115,6 +115,9 @@ type Node struct {
 	// omitempty: 生成列**不能写** —— 插入时跳过（同 ID 的套路）；读时正常扫出来。
 	// 指针: 没有地址就是 NULL（SQLite 里 NULL 互不相等 ⇒ 天然不参与唯一）。
 	Address *string `db:"address,omitempty" json:"-"`
+	// Uniq 类型内唯一键（声明 capabilities.unique 的类型才有值）—— **列不是字段**,
+	// 由写路径算好写进来（core/uniq.go）, 不进 fields JSON、不出现在 API 响应里。
+	Uniq *string `db:"uniq,omitempty" json:"-"`
 
 	// Expand 引用展开容器（typed Expand 填充 — 不落库）: map[路径 key] → *Node / []*Node
 	Expand map[string]any `db:"-" json:"expand,omitempty"`

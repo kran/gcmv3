@@ -24,6 +24,17 @@ CREATE TABLE IF NOT EXISTS nodes (
 	-- 没有 address 字段的类型（= 没声明 addressable）算出来是 NULL ⇒ 选择性参与
 	-- 是免费的, 而且**不需要把类型名写进 DDL** ⇒ 改配置不用重建表。
 	address    TEXT GENERATED ALWAYS AS (NULLIF(json_extract(fields, '$.address'), '')) VIRTUAL,
+	-- uniq 是**类型内唯一键**（声明 capabilities.unique 的那一类才有值）。
+	--
+	-- 与 address 的关键区别: 它**不是生成列** —— 因为键里的字段名每个类型都不同
+	-- （member 是 credit_code, 任职是 person+company）, 而生成列的表达式写死在 DDL 里。
+	-- 所以由**写路径**算好写进来（core/uniq.go 的 projectUniq）:
+	--
+	--	["position","12","34"]   引用按目标 id 进键; 任一部分为空 ⇒ 整键 NULL
+	--
+	-- 值是 JSON 数组（不是分隔符拼串）: 值里带分隔符也不会撞（member/a:b vs member:a/b),
+	-- 而且冲突报错时能原样打印出来给人看。NULL ⇒ 不参与唯一（与 address 同语义）。
+	uniq       TEXT,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 );
@@ -36,6 +47,9 @@ CREATE INDEX IF NOT EXISTS idx_nodes_type_updated ON nodes(type, updated_at DESC
 -- 索引不能带谓词: 实测（2 万行 + ANALYZE）只要谓词里有 type IN (...), planner 就
 -- 再也不使用它（除非查询逐字复现那个列表 —— 站点查询不会）。
 CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_address ON nodes(address);
+-- 类型内唯一: 一个索引覆盖所有类型（类型名是键的第一个元素）——
+-- 于是"一个类型几个唯一字段"不用改 DDL, 也不用把类型名写进语句里。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_uniq ON nodes(uniq);
 
 -- 边: 无身份的引用（类型系统只见"引用字段", 不见边）。**有向**:
 --   A 引用 B 只有一条 (A, field, B); 反向是 B 的字段, 是另一条边。

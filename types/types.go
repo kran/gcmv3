@@ -29,8 +29,17 @@ type TypeDef struct {
 
 // Capabilities 类型选择启用的通用行为。
 type Capabilities struct {
-	Searchable     *SearchableCapability     `yaml:"searchable,omitempty" json:"searchable,omitempty"`
-	Addressable    bool                      `yaml:"addressable,omitempty" json:"addressable,omitempty"`
+	Searchable  *SearchableCapability `yaml:"searchable,omitempty" json:"searchable,omitempty"`
+	Addressable bool                  `yaml:"addressable,omitempty" json:"addressable,omitempty"`
+	// Unique 类型内唯一键: 这些字段的组合在本类型内唯一（[credit_code] 或
+	// [person, company]）。空 = 不约束。
+	//
+	// 与 addressable 的区别: address 是**全表**唯一（跨类型共享命名空间）;
+	// 这里是**类型内**唯一（不同的类型各自一套命名空间 —— 类型名是键的一部分）。
+	//
+	// 值由写路径算成 JSON 数组写进 nodes.uniq 列 + 一条唯一索引（core/uniq.go）;
+	// 引用按目标 id 进键; 任一部分为空 ⇒ 不参与唯一（"没填全 = 不约束"）。
+	Unique         []string                  `yaml:"unique,omitempty" json:"unique,omitempty"`
 	Authentication *AuthenticationCapability `yaml:"authentication,omitempty" json:"authentication,omitempty"`
 }
 

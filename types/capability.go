@@ -64,6 +64,22 @@ func (t *Types) validateTypeConfig(typeName string, td TypeDef) error {
 		}
 	}
 
+	for _, name := range td.Capabilities.Unique {
+		f, err := field(name)
+		if err != nil {
+			return err
+		}
+		// 唯一键的每一部分必须是**标量或单引用**: 多值引用（refs）是集合,
+		// 没有规范顺序 ⇒ "两个集合相等"的语义不清, 当场拒（不猜）。
+		if f.Kind == KindRefList || f.Kind == KindArray || f.Kind == KindObject {
+			return fmt.Errorf("types: type %q: capabilities.unique 里的 %q（kind %s）不能当唯一键 —— "+
+				"多值/复合字段没有规范顺序", typeName, name, f.Kind)
+		}
+	}
+	if duplicate := duplicateName(td.Capabilities.Unique); duplicate != "" {
+		return fmt.Errorf("types: type %q: capabilities.unique 里 %q 重复", typeName, duplicate)
+	}
+
 	view := td.Admin.View
 	if view != "" && view != AdminViewList && view != AdminViewTree {
 		return fmt.Errorf("types: type %q: admin.view must be list or tree", typeName)
@@ -138,4 +154,16 @@ func cloneValue(value any) any {
 	default:
 		return value
 	}
+}
+
+// duplicateName 返回第一个重复项（没有则空串）。
+func duplicateName(names []string) string {
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if seen[name] {
+			return name
+		}
+		seen[name] = true
+	}
+	return ""
 }
