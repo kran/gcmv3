@@ -40,18 +40,22 @@ export default {
         refExpand: {},
             form: { revision: 0, fields: {} },
             saving: false, def: null,
+            detail: null,   // 刚拉回来的详情（带 masked/editable/expand 三个事实）
             initial: '',   // 加载完成时的表单快照（判断"有没有未保存修改"）
             rebaseline: null, // 打开后重设基线的定时器（控件归一化之后再取）
         }
     },
     computed: {
         // 读规则裁掉的字段（服务端在 masked 里给了名字）—— 表单里不渲染
-        maskedFields() { return (this.node && this.node.masked) || [] },
+        // 事实（masked / editable）来自**刚拉回来的详情** —— 列表行里没有它们
+        // （读入口只在单节点响应里算这两个事实, 列表要逐项求值太贵）。用列表行算的话
+        // 就是"一个字段看着能编、改了却被服务端 422 拒"（真实踩过: published_at）。
+        maskedFields() { return ((this.detail || this.node) || {}).masked || [] },
         // 本 actor 在这个节点上不可写的字段 —— 只读展示（服务端算的 editable 之外）
-        // 新建时没有节点 ⇒ 没有这组事实（新建的可写集合是另一件事, 服务端 create 列里有）
+        // 新建时没有节点 ⇒ 没有这组事实（新建的可写集合另说, 由服务端写规则定）
         readonlyFields() {
-            if (!this.isEdit || !this.node || !this.node.editable) return []
-            var editable = this.node.editable
+            var editable = ((this.detail || this.node) || {}).editable
+            if (!this.isEdit || !editable) return []
             return ((this.def && this.def.fields) || [])
                 .map(function (f) { return f.name })
                 .filter(function (name) { return editable.indexOf(name) < 0 })
@@ -152,8 +156,10 @@ export default {
             var r = this.node
             var type = r.type || this.typeName
             this.def = this.defs[type] || null
+            this.detail = null // 先清掉上一个节点的详情: 事实不能串台
             window.$api.node(type, r.id).then((res) => {
                 var full = res.node || res
+                this.detail = full
                 this.form = {
                     revision: full.revision,
                     fields: full.fields || {},
@@ -184,7 +190,7 @@ export default {
             // 只提交本 actor 真的可写的字段（服务端 editable 算好的）—— 提交看不见/不可写的
             // 字段会被写规则拒绝（422: hidden / not writable），整次保存白费。
             // 新建时没有节点事实, 提交全部声明字段（超出的由写规则决定, 见 todo 里的 create 列）。
-            var editable = (this.isEdit && this.node && this.node.editable) || null
+            var editable = (this.isEdit && ((this.detail || this.node) || {}).editable) || null
             var declared = {}
             var self = this
             ;((this.def && this.def.fields) || []).forEach(function (f) {

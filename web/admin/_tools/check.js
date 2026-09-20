@@ -308,9 +308,18 @@ function checkEditorRefLabels() {
     if (!/:node="\{ fields: form\.fields, expand: refExpand \}"/.test(src)) {
         problems.push('没把 node 上下文传给字段渲染器（组件拿不到 node.expand）')
     }
+    // 事实（masked / editable）同理: 只能从**详情**读 —— 列表行里没有它们
+    // （读入口只在单节点响应里算这两个事实）。从列表行读的后果不是"少点信息",
+    // 而是"字段看着能编、改了被服务端 422 拒"（真实踩过: published_at）。
+    if (!/this\.detail = full/.test(src)) {
+        problems.push('loadEdit 没有把详情存下来（this.detail = full）—— 掩码/可写事实要从它读')
+    }
+    if (/this\.node\.editable|this\.node\.masked/.test(src)) {
+        problems.push('编辑器从列表行读 masked/editable（列表行没有这两个事实, 详情才有）')
+    }
     let failed = 0
     for (const problem of problems) { failed++; console.log('  FAIL ' + problem) }
-    if (!failed) console.log('  ok   编辑器引用标签来自详情 expand（不是列表行）')
+    if (!failed) console.log('  ok   编辑器引用标签与掩码/可写事实都来自详情（不是列表行）')
     return failed
 }
 
@@ -491,7 +500,7 @@ async function checkRender() {
         const app = renderer.createApp(comp, props)
         // 与 js/panel.js 一致：模板里的全局要挂到 globalProperties（否则 _ctx.Widgets 是 undefined）
         if (sandbox.Widgets) app.config.globalProperties.Widgets = sandbox.Widgets
-        app.config.errorHandler = (err) => { renderErrors.push(err && err.message ? err.message : String(err)) }
+        app.config.errorHandler = (err) => { renderErrors.push(err && err.message ? err : new Error(String(err))) }
         components.forEach(name => app.component(name, stub(name)))
         app.mount(host)
         return host
@@ -526,6 +535,11 @@ async function checkRender() {
 
     // ② NodeEditDialog 里的 display 行（手写）必须与字段行同构
     const NodeEditDialog = await loadComponent('/pages/NodeEditDialog.vue')
+    if (process.env.DEBUG_FACTS) {
+        const comp = NodeEditDialog.default || NodeEditDialog
+        console.log('    [debug] computed keys: ' + Object.keys(comp.computed || {}).join(','))
+        console.log('    [debug] methods keys: ' + Object.keys(comp.methods || {}).join(','))
+    }
     const dialogHost = mount(NodeEditDialog.default || NodeEditDialog, {
         visible: true, isEdit: false, typeName: 'article',
         defs: { article: { fields } },

@@ -23,6 +23,8 @@ const CASES = [
     ['setup 返回未定义的名字', 'sfc', 'pages/App.vue', 'var loginRealms = ref([])', 'var loginRealmsRenamed = ref([])'],
     ['App.vue 挂载闸门', 'render', 'pages/App.vue', 'Panel.onError(', 'Panel.onErrorX('],
     ['登录渠道下拉闸门', 'render', 'pages/App.vue', ':label="r.name" :value="r.name"', ':label="r.realm" :value="r.realm"'],
+    ['编辑器 facts 来自详情闸门', 'render', 'pages/NodeEditDialog.vue',
+        'this.detail = full', 'this.detail = null'],
     ['只读详情闸门（view 被截断）', 'render', 'widgets/text.vue',
         '    <span v-else-if="mode === \'view\'" class="w-cell">{{ modelValue }}</span>',
         '    <span v-else-if="mode === \'view\'" class="w-cell">{{ Widgets.truncate(modelValue) }}</span>'],
