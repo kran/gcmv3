@@ -203,7 +203,7 @@ func TestAuthRegisterCannotSelfEscalate(t *testing.T) {
 	// actor 的角色只该有基础角色（public + 类型名）; 客户端塞的 owner/admin 不该出现
 	var envelope struct {
 		Actor Actor                           `json:"actor"`
-		User  struct{ Fields map[string]any } `json:"user"`
+		Node  struct{ Fields map[string]any } `json:"node"`
 	}
 	err := json.Unmarshal([]byte(me.Body.String()), &envelope)
 	if err != nil {
@@ -212,8 +212,8 @@ func TestAuthRegisterCannotSelfEscalate(t *testing.T) {
 	if len(envelope.Actor.Roles) != 2 || envelope.Actor.Roles[0] != "public" || envelope.Actor.Roles[1] != "member" {
 		t.Fatalf("actor 角色 = %#v", envelope.Actor.Roles)
 	}
-	if _, ok := envelope.User.Fields["roles"]; ok {
-		t.Fatalf("user.fields 不该有 roles: %#v", envelope.User.Fields)
+	if _, ok := envelope.Node.Fields["roles"]; ok {
+		t.Fatalf("user.fields 不该有 roles: %#v", envelope.Node.Fields)
 	}
 	// 库里也确认一遍
 	method, err := site.Engine().FindAuth("member", "email", "evil@x.com")

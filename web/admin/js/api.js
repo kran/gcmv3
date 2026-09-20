@@ -7,9 +7,9 @@ window.$api = {
 
     // 认证 —— 后台**没有自己的登录端点**（后台 = 前台 + 权限）:
     //   登录页先列"能登录的类型"(realm), 再调该类型自己的 auth 插件端点。
-    me:          function () { return Panel.get('/admin/me') },
+    me:          function () { return Panel.get('/api/auth/me') },
     types:       function () { return Panel.get('/admin/types') },
-    loginRealms: function () { return Panel.get('/admin/login/realms') },
+    loginRealms: function () { return Panel.get('/api/auth/realms') },
     login:       function (realm, identifier, secret) {
         return Panel.post('/api/auth/' + realm + '/login', { method: 'username', identifier: identifier, secret: secret })
     },
@@ -21,25 +21,25 @@ window.$api = {
     },
 
     // 节点 —— 与前台/小程序**同一批端点**（后台只是身份不同: 前台 + 权限）。
-    // ref 字段经 fields 提交, 引擎落边; expand=* = 展开自动声明的引用一层（列表要显示引用名）。
+    // ref 字段经 fields 提交, 引擎落边; 读入口按类型**自动展开一层**引用（不需要参数）。
     nodes:      function (type, query) { return Panel.get('/api/nodes/' + type, query) },
-    node:       function (type, id) { return Panel.get('/api/nodes/' + type + '/' + id, { expand: '*' }) },
+    node:       function (type, id) { return Panel.get('/api/nodes/' + type + '/' + id) },
     createNode: function (type, n) { return Panel.post('/api/nodes/' + type, n) },
     updateNode: function (type, id, n) { return Panel.put('/api/nodes/' + type + '/' + id, n) },
     deleteNode: function (type, id) { return Panel.del('/api/nodes/' + type + '/' + id) },
-    // parent = 用哪个字段当父（服务端要求显式给：内核不推导"哪个自引用字段是父"）
-    tree:       function (type, parent) { return Panel.get('/api/tree/' + type, { expand: '*', parent: parent }) },
-
-    // 实体检索 (引用编辑器) / 入边引用
-    search:  function (query) { return Panel.get('/api/search/nodes', query) },
-    inbound: function (id, query) { return Panel.get('/api/inbound/' + id, query) },
 
     // refLabel: 节点显示名（任何消费端统一）— 后台列表/引用选择器用。
-    // 优先级: display → 类型定义字段序第一个非空字符串标量
-    // （关系节点兜底）→ expand 引用合成 → #id。
+    // 优先级: 合成节点自带的 label（预置值回显）→ 类型 **admin.columns** 里第一个非空标量
+    //        → 类型字段序里第一个非空字符串标量 → expand 引用合成 → #id。
+    // （没有 display 这种系统列了: 显示什么完全由 types 声明决定。）
     refLabel: function (n, def) {
         if (!n) { console.log('[refLabel] null node'); return '#?' }
-        if (n.display) return n.display
+        if (n.label) return n.label
+        const cols = ((def || {}).admin || {}).columns || []
+        for (const name of cols) {
+            const v = (n.fields || {})[name]
+            if (typeof v === 'string' && v.trim()) return v
+        }
         if (def) {
             for (const f of def.fields || []) {
                 const v = (n.fields || {})[f.name]
@@ -49,10 +49,11 @@ window.$api = {
         const parts = []
         for (const v of Object.values(n.expand || {})) {
             const arr = Array.isArray(v) ? v : (v ? [v] : [])
-            for (const m of arr) if (m && m.display) parts.push(m.display)
+            for (const m of arr) if (m && m.label) parts.push(m.label)
+            else if (m && m.fields) parts.push(window.$api.refLabel(m, (window.$api._defs || {})[m.type]))
         }
         if (parts.length) return parts.join('·')
-        console.log('[refLabel] 兜底 #id:', { id: n.id, type: n.type, display: n.display,
+        console.log('[refLabel] 兜底 #id:', { id: n.id, type: n.type,
             hasDef: !!def, fields: n.fields, expandKeys: Object.keys(n.expand || {}) })
         return '#' + n.id
     },

@@ -5,14 +5,22 @@
 <template>
     <div class="fr">
         <template v-for="f in fields" :key="f.name">
-            <div v-if="!isMasked(f)" class="fr-item" :class="{ 'fr-readonly': isReadOnly(f) }">
+            <!-- 被读规则裁掉的字段: **不显示值**, 但要留下一个明确的占位 ——
+                 渲染成空会被误当成"没值", 直接不渲染会被误当成"没这个字段"。 -->
+            <div v-if="isMasked(f)" class="fr-item fr-masked">
+                <div class="fr-label">
+                    <span>{{ f.label || f.name }}</span>
+                    <span class="fr-kind">{{ f.kind }}</span>
+                    <span class="fr-kind">无权限查看</span>
+                </div>
+                <div class="fr-cell fr-masked-cell">无权限查看</div>
+            </div>
+            <div v-else class="fr-item" :class="{ 'fr-readonly': isReadOnly(f) }">
                 <div class="fr-label">
                     <span>{{ f.label || f.name }}</span>
                     <span class="fr-kind">{{ f.kind }}</span>
                     <span v-if="f.required" class="fr-req">*</span>
-                    <span v-if="isReadOnly(f)" class="fr-kind">
-                        {{ f.immutable ? '不可变' : '只读' }}
-                    </span>
+                    <span v-if="isReadOnly(f)" class="fr-kind">只读</span>
                 </div>
 
                 <!-- 结构：数组（元素为 object 时子字段递归，其它包一层复用） -->
@@ -138,9 +146,10 @@ export default {
             })
         },
         isMasked(f) { return this.masked.indexOf(f.name) >= 0 },
+        // 只读 = 服务端算出来的 editable 里没有它（可写性由规则定, 前端不猜）
         isReadOnly(f) {
             if (!this.editing) return false
-            return !!f.immutable || this.readonly.indexOf(f.name) >= 0
+            return this.readonly.indexOf(f.name) >= 0
         },
         structSummary(f) {
             const v = this.get(f.name)
@@ -202,6 +211,9 @@ function defaultItem(item) {
 .fr-item { margin-bottom: 12px; width: 100%; min-width: 0; }
 .fr-cell { padding: 4px 8px; border-radius: 4px; background: #f9fafb; border: 1px solid #eee; }
 .fr-readonly { opacity: .7; pointer-events: none; }
+/* 被读规则裁掉的字段: 占位要显眼但不像错误（它是正常的状态, 不是故障） */
+.fr-masked-cell { color: #a19f9d; font-style: italic; }
+.fr-masked .fr-kind:last-child { color: #a19f9d; }
 .fr-item .el-input, .fr-item .el-textarea, .fr-item .el-select,
 .fr-item .el-input-number, .fr-item .el-color-picker { width: 100%; }
 .fr-label { font-size: 13px; font-weight: 600; color: #444; margin-bottom: 4px; }

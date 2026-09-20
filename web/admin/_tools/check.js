@@ -18,8 +18,9 @@ const vm = require('vm')
 
 // KERNEL_KINDS 内核 types 包声明的 kind（改动 types/*.go 时这里要跟着对）——
 // 只用来在检查时提示"哪些 kind 在后台还没有控件"。
-const KERNEL_KINDS = ['array', 'bool', 'gallery', 'number', 'object', 'ref', 'richtext',
-    'select', 'slug', 'strings', 'text', 'textarea', 'timestamp', 'upload-file', 'upload-image']
+const KERNEL_KINDS = ['address', 'array', 'bool', 'gallery', 'multiselect', 'number', 'object',
+    'ref', 'refs', 'richtext', 'select', 'text', 'textarea', 'timestamp',
+    'upload-file', 'upload-image']
 
 const ADMIN_DIR = path.join(__dirname, '..')
 const PAGES_DIR = path.join(ADMIN_DIR, 'pages')
@@ -500,7 +501,7 @@ async function checkRender() {
     //     不是输入框）; 可写的字段仍是编辑控件。FieldRenderer 是干这件事的地方, 直接挂它。
     const facts = [
         { name: 'title', kind: 'text', label: '标题' },      // 可写
-        { name: 'body', kind: 'richtext', label: '正文' },    // 不可写（不在 readonly 之外的可写集合里）
+        { name: 'body', kind: 'richtext', label: '正文' },    // 不可写（可写集合里没有它）
         { name: 'secret', kind: 'text', label: '内部备注' },   // 被读规则裁掉（masked）
     ]
     const factsHost = mount(FieldRenderer.default || FieldRenderer, {
@@ -515,10 +516,19 @@ async function checkRender() {
     const rowOf = (name) => factsRows.find(r => textsOf(r).some(t => String(t).trim() === name))
     const isWidget = (n) => String(n.tag).indexOf('widget-') === 0
     const labels = factsRows.map(r => textsOf(r).join('|')).join('  //  ')
-    if (factsRows.length !== 2) {
-        fail('三字段表单应只画 2 行（masked 那行不渲染）, 实际 ' + factsRows.length + ' 行: ' + labels)
+    // masked 的字段: **不显示值**, 但要留一行明确的占位（渲染成空会被当成"没值"）
+    const maskedRow = rowOf('内部备注')
+    const maskedTexts = maskedRow ? textsOf(maskedRow).join('|') : ''
+    if (factsRows.length !== 3) {
+        fail('三字段表单应画 3 行（masked 那行是占位）, 实际 ' + factsRows.length + ' 行: ' + labels)
     }
-    else if (rowOf('内部备注')) fail('被读规则裁掉的字段（masked）不该出现在表单里')
+    else if (!maskedRow) fail('被读规则裁掉的字段（masked）连占位行都没有: ' + labels)
+    else if (maskedTexts.indexOf('无权限查看') < 0) {
+        fail('masked 行没写"无权限查看"占位: ' + maskedTexts)
+    }
+    else if (walk(maskedRow).some(isWidget) || walk(maskedRow).some(n => n.tag === 'el-input')) {
+        fail('masked 行不该有输入控件（值看不到, 别给编辑入口）')
+    }
     else if (!rowOf('正文')) fail('找不到正文那一行: ' + labels)
     else if (walk(rowOf('正文')).some(n => n.tag === 'el-input')) {
         fail('不可写的字段渲染成了输入框（应只读展示）')
@@ -527,22 +537,18 @@ async function checkRender() {
     } else if (!walk(rowOf('标题')).some(isWidget)) {
         fail('可写的字段没有渲染编辑控件')
     } else {
-        pass('masked 字段不渲染；不可写字段走组件只读展示；可写字段仍是编辑控件')
+        pass('masked 字段留"无权限查看"占位（无控件）；不可写字段走组件只读展示；可写字段仍是编辑控件')
     }
 
-    const dialogRows = walk(dialogHost).filter(n => n.tag === 'div' && n.props.class === 'fr-item')
-    if (dialogRows.length !== 1) fail('节点表单里 .fr-item 行数 = ' + dialogRows.length + '（display 行应恰好 1 行）')
-    else {
-        const display = shapeOf(dialogRows[0])
-        printRow('display', display)
-        const ref = fieldRows.find(r => r.texts[1] === 'text')
-        if (display.texts[0] !== '显示' || display.texts[1] !== 'display') fail('display 行 label/kind 不对')
-        else if (!ref || display.classes !== ref.classes || noReq(display) !== noReq(ref)) {
-            fail('display 行结构与字段行不一致（应与 ' + JSON.stringify(ref) + ' 同构）')
-        } else if (display.control !== 'el-input') fail('display 行控件 = ' + display.control + '（text 列应仍是 el-input）')
-        else if (ref.control !== 'widget-text') fail('text 字段没有走 text 渲染器（实际 ' + ref.control + '）')
-        else if (display.spanClasses.indexOf('fr-req') < 0) fail('display 为必填, 应带 * 标记')
-        else pass('节点表单 display 行与字段行同构（label/kind/必填 + text 渲染器）')
+    // display 系统列已经去掉（显示什么完全由 types 声明决定）⇒ 节点表单里**不该**再手写
+    // 字段行: 所有行都来自 FieldRenderer。这里查源码而不是 DOM —— mount 时 watcher 还没跑,
+    // def 为空 ⇒ DOM 里 0 行, 断言 DOM 只会绿灯放行"手写行又回来了"。
+    const dialogSrc = read(path.join(ADMIN_DIR, 'pages/NodeEditDialog.vue'))
+    const handRows = (dialogSrc.match(/class="fr-item/g) || []).length
+    if (handRows > 0) {
+        fail('NodeEditDialog 里又手写了 ' + handRows + ' 个 .fr-item 行（字段该全部交给 FieldRenderer）')
+    } else {
+        pass('NodeEditDialog 没有手写字段行（全部由 FieldRenderer 渲染）')
     }
 
     // 权限矩阵页不在这里挂: 它的结构（el-tabs + 表格列 v-for + 列作用域槽）会踩到本渲染器
@@ -591,44 +597,49 @@ async function checkRender() {
     if (!/@open-node=/.test(nodesSrc)) problems.push('列表没有接住引用的 @open-node（点引用链接没反应）')
     if (!/refEdit\.visible/.test(nodesSrc)) problems.push('缺引用目标的编辑抽屉（点引用链接打不开表单）')
     // ref/refs 是**筛选**语义（单选 vs 多选 → 查询 AST 不同），不是渲染特判，允许出现
-    const renderKinds = /kind\s*===\s*['"](timestamp|upload-image|upload-file|gallery|richtext|bool|select|slug|textarea|number|text)['"]/
+    const renderKinds = /kind\s*===\s*['"](timestamp|upload-image|upload-file|gallery|richtext|bool|select|address|textarea|number|text)['"]/
     if (renderKinds.test(nodesSrc)) problems.push('列表里按 kind 名特判显示（应交给同名组件）')
     for (const problem of problems) fail(problem)
     if (!problems.length) pass('列表单元格走渲染器，没有 kind 特判')
 
-    const searchCalls = []
+    const nodeCalls = []
     sandbox.$api = {
-        refLabel: (n) => n.display || ('#' + n.id),
-        search: async (params) => { searchCalls.push(params); return { items: [] } },
+        refLabel: (n, def) => {
+            if (!n) return '#?'
+            if (n.label) return n.label
+            for (const c of (((def || {}).admin || {}).columns || [])) {
+                const v = (n.fields || {})[c]
+                if (typeof v === 'string' && v.trim()) return v
+            }
+            return '#' + n.id
+        },
+        nodes: async (type, params) => { nodeCalls.push({ type, params }); return { items: [] } },
     }
     const RefWidget = await loadComponent('/widgets/ref.vue')
     const wMethods = (RefWidget.default || RefWidget).methods
     const fctx = { found: [], loading: false, loaded: false, node: { expand: {} }, defs: {},
         field: { name: 'category', to: 'category', kind: 'ref' }, $emit: () => {} }
     for (const name of Object.keys(wMethods)) fctx[name] = wMethods[name].bind(fctx)
-    const refField = { name: 'category', to: 'category', kind: 'ref' }
     await fctx.preload()
     await fctx.preload()
-    await fctx.search('新闻')
-    await fctx.preload()
-    const searched = searchCalls.map(c => ({ q: c.q, sort: c.sort || '', type: c.type }))
-    console.log('       引用控件调用: ' + JSON.stringify(searched))
-    if (searchCalls.length !== 2) fail('引用预载调用次数 = ' + searchCalls.length + '（期望 2: 预载一次 + 打字一次）')
-    else if (searched[0].q !== '' || searched[0].sort !== '-id' || searched[0].type !== 'category') {
-        fail('预载应带空 q + sort=-id + 目标类型: ' + JSON.stringify(searched[0]))
-    } else if (searched[1].q !== '新闻' || searched[1].sort !== '') {
-        fail('打字搜索不该带 sort: ' + JSON.stringify(searched[1]))
+    console.log('       引用控件调用: ' + JSON.stringify(nodeCalls))
+    if (nodeCalls.length !== 1) {
+        fail('引用候选只该拉一次（打开下拉时）, 实际 ' + nodeCalls.length + ' 次')
+    } else if (nodeCalls[0].type !== 'category' || nodeCalls[0].params.size !== 100 ||
+        nodeCalls[0].params.sort !== '-id') {
+        fail('引用候选该拉目标类型的一页（size=100, sort=-id）: ' + JSON.stringify(nodeCalls[0]))
+    } else if (typeof fctx.search === 'function' || typeof fctx.load === 'undefined') {
+        fail('引用控件还在走远程搜索（gcmv3 没有检索端点: 拉一页 + 组件本地过滤）')
     } else {
-        pass('引用预载: 首次打开拉一批、之后不重复、打字搜索不受影响')
+        pass('引用候选: 首次打开拉一页、之后不重复（过滤交给组件的 filterable）')
     }
 
-    // ④ nodes.vue 引用筛选: 每个 ref 字段一项。树目标选分类（含子树）、其他目标搜索选节点;
-    //    选中/清除都要显式 setCurrentKey（el-tree 只在初始化读 current-node-key），多字段 AND 组合。
+    // ④ nodes.vue 引用筛选: 每个 ref 字段一项, 选中/清除 + 多字段 AND 组合。
+    //    （树视图与树筛选已延后 —— 内核没有 tree, admin.view=tree 暂时只是声明。）
     const NodesPage = await loadComponent('/pages/nodes.vue')
     const nodesComp = NodesPage.default || NodesPage
 
     const methods = nodesComp.methods
-    const calls = []
     // ④b 点引用链接 → 打开目标节点的编辑抽屉（只带 id+type，表单自己去拉全量与引用回显）
     const refCtx = { ...nodesComp.data(), $emit: () => {} }
     methods.openRef.call(refCtx, { id: 42, type: 'industry', label: '钢铁' })
@@ -640,20 +651,13 @@ async function checkRender() {
     } else {
         pass('点引用链接: 用目标 id+type 打开编辑抽屉（类型跟着目标走）')
     }
-    // 假上下文以组件自己的 data() 为底 —— 不然 data 里少个字段（比如被注释吃掉一行）
-    // 这里也照样过, 页面却在浏览器里炸。
+    const baseData = typeof nodesComp.data === 'function' ? nodesComp.data() : {}
     const fake = {
-        ...(typeof nodesComp.data === 'function' ? nodesComp.data() : {}),
-        query: { ...((typeof nodesComp.data === 'function' ? nodesComp.data() : {}).query || {}), page: 7, filter: '' },
-        $refs: {
-            'tree-category': [{ setCurrentKey(key) { calls.push(key) } }],
-            'fp-category': [{ hide() { calls.push('hide') } }],
-        },
-        setTreeCurrent: methods.setTreeCurrent,
-        collectSubtree: methods.collectSubtree,
+        ...baseData,
+        query: { ...(baseData.query || {}), page: 7, filter: '' },
+        $refs: { 'fp-category': [{ hide() {} }] },
         combineFilters: methods.combineFilters,
         applyFilters: methods.applyFilters,
-        closeFilterPopover: methods.closeFilterPopover,
         titleOf: () => '新闻',
         refresh() {},
     }
@@ -663,43 +667,40 @@ async function checkRender() {
     }
     // 假上下文里用到的 data 字段, 必须在组件自己的 data() 里真实存在 ——
     // 否则测试自己造了一个组件里根本没有的字段, 页面在浏览器里炸了这里却是绿的。
-    const baseData = typeof nodesComp.data === 'function' ? nodesComp.data() : {}
     for (const key of Object.keys(fake)) {
         if (key.startsWith('$') || typeof fake[key] === 'function') continue
         if (!(key in baseData)) throw new Error('nodes.vue 的 data() 缺少 ' + key + '（data() 被改坏了?）')
     }
-    const ft = { field: 'category', to: 'category', tree: true, active: 0, activeLabel: '', _ids: null }
-    const fr = { field: 'event', to: 'event', tree: false, active: 0, activeLabel: '', _ids: null,
+    const fr = { field: 'event', to: 'event', active: 0, activeLabel: '', _ids: null,
                  options: [{ id: 83, label: '2026 新能源产业对接会 #83' }] }
-    fake.filters = [ft, fr]
-    methods.pickTreeNode.call(fake, ft, { id: 9, children: [{ id: 10 }] })
-    const selected = { key: calls[0], filter: fake.query.filter, active: ft.active, page: fake.query.page }
+    const fc = { field: 'category', to: 'category', active: 0, activeLabel: '', _ids: null }
+    fake.filters = [fc, fr]
+    methods.pickRef.call(fake, fc, 9)
+    const one = { filter: fake.query.filter, active: fc.active, page: fake.query.page }
     methods.pickRef.call(fake, fr, 83)
     const both = fake.query.filter
-    methods.clearFilter.call(fake, ft)
-    methods.pickRef.call(fake, fr, undefined)
-    const cleared = { keys: calls.slice(), filter: fake.query.filter, active: ft.active, ids: ft._ids }
-    console.log('       选分类: ' + JSON.stringify(selected) + '\n       再选活动: ' + JSON.stringify(both)
+    methods.clearFilter.call(fake, fc)
+    const cleared = { filter: fake.query.filter, active: fc.active, ids: fc._ids }
+    console.log('       选分类: ' + JSON.stringify(one) + '\n       再选活动: ' + JSON.stringify(both)
         + '\n       清空: ' + JSON.stringify(cleared))
-    if (selected.key !== 9 || selected.filter !== '(in ->category [9 10])' || selected.page !== 1) {
-        fail('树目标选中没有同步 el-tree 高亮/过滤串/回到第 1 页')
-    } else if (both !== '(and (in ->category [9 10]) (in ->event [83]))') {
+    if (one.filter !== '(in ->category [9])' || one.page !== 1) {
+        fail('单选引用没有写过滤串/回到第 1 页: ' + JSON.stringify(one))
+    } else if (both !== '(and (in ->category [9]) (in ->event [83]))') {
         fail('多字段引用筛选没有 AND 组合')
-    } else if (!cleared.keys.includes(null) || cleared.filter !== '' || cleared.active !== 0 || cleared.ids !== null) {
-        fail('点“全部”后旧分类高亮未重置')
+    } else if (cleared.filter !== '(in ->event [83])' || cleared.active !== 0 || cleared.ids !== null) {
+        fail('清除一个筛选后另一个该留着: ' + JSON.stringify(cleared))
     } else {
-        pass('引用筛选: 树目标含子树、其他目标单选节点、多字段 AND、清除后高亮重置')
+        pass('引用筛选: 单选节点、多字段 AND、清除只影响自己')
     }
 
-    // ④ 切换类型要清掉上一个类型的查询残留: 搜索框(q)/筛选表达式(filter)/页码
-    fake.query.q = '上一个类型的搜索词'
+    // ④ 切换类型要清掉上一个类型的查询残留: 筛选表达式(filter)/页码
     fake.query.filter = '(in ->category [9])'
     fake.query.page = 7
     methods.selectType.call(fake, 'signup')
-    if (fake.query.q !== '' || fake.query.filter !== '' || fake.query.page !== 1) {
-        fail('切换类型后查询残留: ' + JSON.stringify({ q: fake.query.q, filter: fake.query.filter, page: fake.query.page }))
+    if (fake.query.filter !== '' || fake.query.page !== 1) {
+        fail('切换类型后查询残留: ' + JSON.stringify({ filter: fake.query.filter, page: fake.query.page }))
     } else {
-        pass('切换类型清空搜索词/筛选/页码')
+        pass('切换类型清空筛选/页码')
     }
 
     // ⑤ 左侧类型列表: 组内按类型键排序；没填 group 的与站点自命的"未分组"并成同一节，且排最前
@@ -736,13 +737,13 @@ async function checkRender() {
     sandbox.Panel = { loadComponent: (rel) => loadComponent('/' + rel) }
     // 期望值：每行 [modelValue, 应该看到的内容注解]（文本片段或图片数）
     const samples = {
-        text: '标题', textarea: '第一行\n第二行', slug: 'about-us', richtext: '<p>正文</p>',
+        text: '标题', textarea: '第一行\n第二行', address: 'about-us', richtext: '<p>正文</p>',
         number: 3, bool: true, select: 'draft', timestamp: '2026-07-18T09:30:00Z',
         'upload-image': '/uploads/a.png', 'upload-file': '/uploads/a.mp4',
         gallery: ['/uploads/a.png', '/uploads/b.png'], ref: 7, refs: [7, 8],
     }
     const expect = {
-        text: { text: '标题' }, textarea: { text: '第一行' }, slug: { text: 'about-us' },
+        text: { text: '标题' }, textarea: { text: '第一行' }, address: { text: 'about-us' },
         richtext: { text: '正文' }, number: { text: '3' }, bool: { text: '✓' },
         select: { text: 'draft' }, timestamp: { text: '2026' },
         'upload-image': { imgs: 1, src: '/uploads/a.png' }, 'upload-file': { text: 'a.mp4' },
@@ -757,8 +758,11 @@ async function checkRender() {
             render() {
                 return Vue.h(sandbox.Widgets.resolve(kind), {
                     mode: 'cell', modelValue: samples[kind], field: { kind, name: 'ref' },
-                    // 引用目标从 node.expand 取（组件接口：node + field + mode）
-                    node: { expand: { ref: [{ id: 1, type: 'category', display: '引用目标' }] } },
+                    // 引用目标从 node.expand 取（组件接口：node + field + mode）。
+                    // 显示名走 refLabel: 这里给真实的形状（fields + defs.admin.columns）——
+                    // 没有 display 系统列了。
+                    node: { expand: { ref: [{ id: 1, type: 'category', fields: { name: '引用目标' } }] } },
+                    defs: { category: { admin: { columns: ['name'] }, fields: [{ name: 'name', kind: 'text' }] } },
                 })
             },
         }, {}, stubs)

@@ -152,7 +152,7 @@ func (s *Site) authRealms(ctx *CmsCtx) {
 	_ = ctx.Json(http.StatusOK, map[string]any{"realms": realms})
 }
 
-// authMe GET /api/auth/me —— 当前身份 + 掩码后的节点。
+// authMe GET /api/auth/me —— 当前身份 + 掩码后的节点（键名与 /api/nodes/* 一致: node）。
 func (s *Site) authMe(ctx *CmsCtx) {
 	if ctx.Actor().IsAnonymous() {
 		ctx.Fail(Unauthorized("未登录"))
@@ -168,7 +168,7 @@ func (s *Site) authMe(ctx *CmsCtx) {
 		ctx.Fail(err)
 		return
 	}
-	_ = ctx.Json(http.StatusOK, map[string]any{"actor": ctx.Actor(), "user": masked})
+	_ = ctx.Json(http.StatusOK, map[string]any{"actor": ctx.Actor(), "node": masked})
 }
 
 // authLogout POST /api/auth/logout —— **与渠道无关**: 一个浏览器一个会话。
@@ -245,6 +245,6 @@ func (c *CmsCtx) respondLogin(token string) error {
 		return err
 	}
 	return c.Json(http.StatusOK, map[string]any{
-		"token": token, "actor": c.Actor(), "user": masked,
+		"token": token, "actor": c.Actor(), "node": masked,
 	})
 }

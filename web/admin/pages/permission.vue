@@ -34,7 +34,6 @@
                     <el-table-column label="字段" width="220">
                         <template #default="sc">
                             {{ sc.row.field_label || sc.row.field }}
-                            <i v-if="sc.row.immutable" class="perm-imm" title="不可变（引擎层强制，与权限无关）">锁</i>
                         </template>
                     </el-table-column>
                     <el-table-column v-for="s in shownScenes" :key="s.id" :label="s.label" width="112" align="center">

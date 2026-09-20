@@ -16,6 +16,7 @@
 package web
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/kran/gcmv3/core"
@@ -61,9 +62,7 @@ func (c *CmsCtx) editableFields(node *core.Node, rawFields core.Fields, patch *c
 		probe = *patch
 		if len(patch.Fields) > 0 {
 			probe.Fields = make(core.Fields, len(patch.Fields))
-			for name, value := range patch.Fields {
-				probe.Fields[name] = value
-			}
+			maps.Copy(probe.Fields, patch.Fields)
 		}
 	}
 	// 给规则一个"同一节点 + 未掩码字段"的视图（不借出我们自己那份）

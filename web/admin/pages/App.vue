@@ -13,7 +13,7 @@
             </div>
             <div class="panel-login-subtitle">{{ siteName }} · 内容管理</div>
             <el-form @submit.prevent="doLogin" class="panel-login-form">
-                <el-select v-if="loginRealms.length > 1" v-model="loginForm.realm" placeholder="登录类型" size="large">
+                <el-select v-if="loginRealms.length > 1" v-model="loginForm.realm" placeholder="登录渠道" size="large">
                     <el-option v-for="r in loginRealms" :key="r.realm" :label="r.realm" :value="r.realm" />
                 </el-select>
                 <el-input v-model="loginForm.identifier" placeholder="账号" size="large">
@@ -196,7 +196,11 @@ export default {
             try {
                 var res = await $api.loginRealms()
                 loginRealms.value = res.realms || []
-                if (!loginForm.realm && loginRealms.value.length) loginForm.realm = loginRealms.value[0].realm
+                if (!loginForm.realm && loginRealms.value.length) {
+                    // 默认渠道优先（AuthRealm.Default）; 没有就取第一个
+                    var preferred = loginRealms.value.find(function (r) { return r['default'] })
+                    loginForm.realm = (preferred || loginRealms.value[0]).name
+                }
             } catch (e) { console.error('[panel] loadLoginRealms failed:', e) }
         }
 
@@ -206,7 +210,6 @@ export default {
                 phase.value = 'app'
                 console.log('[app] checkAuth ok, phase=app, route=', route.name, route.path)
                 loadPanels()   // 站点面板: 动态注册路由 + 菜单
-                loadTreeMenus() // tree 类型独立菜单（view: tree）
             } catch (_) {
                 console.log('[app] checkAuth failed → login')
                 phase.value = 'login'
@@ -271,7 +274,6 @@ export default {
                 }
                 phase.value = 'app'
                 loadPanels()   // 站点面板: 动态注册路由 + 菜单
-                loadTreeMenus() // tree 类型独立菜单（view: tree）
                 if (defaultPage) router.push({ name: defaultPage })
             } catch (e) {
                 loginForm.error = (e && e.message) ? e.message : '登录失败'

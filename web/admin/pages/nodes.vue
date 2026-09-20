@@ -24,72 +24,29 @@
     <div class="nodes-list">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
         <span style="font-size:16px;">{{ query.type || '未选择类型' }}</span>
-        <el-input v-model="query.q" placeholder="搜索显示名称" size="small" style="width:180px"
-                  clearable @change="refresh" />
-        <!-- 引用筛选：类型的每个 ref 字段一项。目标类型是树（capabilities.tree）→ 选分类含子树；
-             其他引用 → 与编辑表单同款的可搜索选择（远程搜节点）。 -->
+        <!-- 引用筛选：类型的每个 ref 字段一项, 与编辑表单同款的可搜索选择 -->
         <el-popover v-for="f in filters" :key="f.field" trigger="click" placement="bottom-start"
-                    :show-timeout="0" :hide-timeout="0"
-                    :width="f.tree ? 200 : 280" style="margin-left:8px;" :ref="'fp-' + f.field"
-                    @show="onFilterOpen(f)">
+                    :show-timeout="0" :hide-timeout="0" :width="280" style="margin-left:8px;"
+                    :ref="'fp-' + f.field" @show="onFilterOpen(f)">
           <template #reference>
             <el-button link size="small" class="filter-link" :class="{ active: f.active }">
               {{ f.active ? (f.activeLabel + ' ✕') : ('按' + f.label + '筛选') }}
             </el-button>
           </template>
-          <div v-if="f.tree" style="max-height:300px;overflow:auto;">
-            <div class="type-item" :class="{ active: f.active === 0 }" @click="clearFilter(f)">
-              <span>全部</span>
-            </div>
-            <!-- 默认收起: 分类多的时候整片展开没法看。点节点=选中, 点箭头=展开。 -->
-            <el-tree :ref="'tree-' + f.field" :data="f.nodes" node-key="id"
-                     :expand-on-click-node="false" highlight-current
-                     :current-node-key="f.active" @node-click="(n) => pickTreeNode(f, n)">
-              <template #default="{ data }">
-                <span class="tree-node-label" style="font-size:13px;">{{ titleOf(data) }}</span>
-              </template>
-            </el-tree>
-          </div>
-          <div v-else>
-            <el-select :model-value="f.active || null" filterable remote clearable
-                       :remote-method="(q) => searchFilterRef(f, q)" :loading="f.loading"
-                       placeholder="搜索并选择" style="width:100%"
-                       @update:model-value="(v) => pickRef(f, v)">
-              <el-option v-for="o in f.options" :key="o.id" :label="o.label" :value="o.id" />
-            </el-select>
-          </div>
+          <el-select :model-value="f.active || null" filterable clearable
+                     :loading="f.loading" placeholder="搜索并选择" style="width:100%"
+                     @update:model-value="(v) => pickRef(f, v)">
+            <el-option v-for="o in f.options" :key="o.id" :label="o.label" :value="o.id" />
+          </el-select>
         </el-popover>
         <el-button size="small" @click="refresh"><el-icon><Refresh /></el-icon>刷新</el-button>
         <div style="flex:1;"></div> <!-- 右侧靠拢 -->
-        <el-button size="small" :loading="rebuilding" @click="rebuildSearch"><el-icon><Refresh /></el-icon>重建索引</el-button>
         <el-button type="primary" size="small" :disabled="!query.type" @click="createVisible = true">
           <el-icon><Plus /></el-icon>新建 {{ query.type ? typeLabel(query.type) : '' }}
         </el-button>
       </div>
 
-      <!-- 树视图（view: tree 类型, 全量不分页; el-table 树形模式, 行操作: 编辑/新建子/删除） -->
-      <el-table v-if="treeMode" :data="treeNodes" v-loading="loading" row-key="id"
-                :tree-props="{ children: 'children' }" default-expand-all >
-        <el-table-column label="标题" min-width="260" show-overflow-tooltip>
-          <template #default="{ row: r }"><a class="node-title-link" @click.prevent="openEdit(r)">{{ titleOf(r) }}</a></template>
-        </el-table-column>
-        <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>
-          <template #default="{ row: r }">
-            <component v-if="cellOf(c)" :is="cellOf(c)" mode="cell" :model-value="fieldOf2(r, c)"
-                       :field="fieldDef(c)" :node="r" @open-node="openRef" />
-            <span v-else-if="isStruct(c)" class="cell-struct">{{ structSummary(r, c) }}</span>
-            <span v-else class="cell-error">字段 {{ c }} 没有 kind</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
-          <template #default="{ row: r }">
-            <node-ops :node="r" :defs="typeDefs" :type-name="query.type" show-create
-                      :parent-id="r.id" @changed="refresh" />
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-table v-else :data="rows" v-loading="loading">
+      <el-table :data="rows" v-loading="loading">
         <el-table-column prop="id" label="ID" width="70" />
         <el-table-column label="标题" min-width="260" show-overflow-tooltip>
           <template #default="{ row: r }"><a class="node-title-link" @click.prevent="openEdit(r)">{{ titleOf(r) }}</a></template>
@@ -112,7 +69,7 @@
         </el-table-column>
       </el-table>
 
-      <div v-if="!treeMode" style="display:flex;justify-content:flex-end;margin-top:12px;">
+      <div style="display:flex;justify-content:flex-end;margin-top:12px;">
         <el-pagination background layout="total, prev, pager, next" :total="total"
                        :page-size="query.size" :current-page="query.page"
                        @current-change="onPageChange" />
@@ -150,12 +107,8 @@ export default {
             rows: [],
             total: 0,
             loading: false,
-            treeMode: false,
-            treeNodes: [],
-            parentField: 'parent',
-            filters: [],       // 引用筛选: [{field, to, label, tree, nodes, options, active, activeLabel}]
-            query: { type: '', q: '', page: 1, size: 25 },
-            rebuilding: false,
+            filters: [],       // 引用筛选: [{field, to, label, options, active, activeLabel}]
+            query: { type: '', filter: '', page: 1, size: 25 },
             createVisible: false,
             editVisible: false,
             refEdit: { visible: false, node: null, typeName: '' },   // 点引用链接打开的节点（类型可能不同）
@@ -169,7 +122,7 @@ export default {
         },
         adminColumns() {
             const def = this.typeDefs[this.query.type] || {}
-            return ((def.admin && def.admin.columns) || []).filter(c => !['id', 'display', 'updated_at'].includes(c))
+            return ((def.admin && def.admin.columns) || []).filter(c => !['id', 'updated_at'].includes(c))
         },
     },
     async mounted() { await this.loadTypes() },
@@ -251,29 +204,10 @@ export default {
         selectType(t) {
             this.query.type = t
             this.query.page = 1
-            // 类型切换清残留: 筛选表达式是按旧类型的字段填的（对不上新类型, fail-loud 报错）;
-            // 搜索词则是"留在框里还在生效"的隐形过滤 —— 一起清掉, 别让它跨类型继续作用。
-            this.query.q = ''
+            // 类型切换清残留: 筛选表达式是按旧类型的字段填的（对不上新类型, fail-loud 报错）
             this.query.filter = ''
-            const def = this.typeDefs[t] || {}
-            this.treeMode = !!(def.admin && def.admin.view === 'tree')
-            this.setupFilters(def)
-            if (this.treeMode) this.loadTree()
-            else this.refresh()
-        },
-        // 树父字段由 capability 明确声明。
-        selfRefField(def) {
-            return def && def.capabilities && def.capabilities.tree
-                ? def.capabilities.tree.parent : ''
-        },
-        async loadTree() {
-            if (!this.query.type) return
-            this.loading = true
-            try {
-                const res = await window.$api.tree(this.query.type, this.treeParent(this.query.type))
-                this.parentField = this.selfRefField(this.typeDefs[this.query.type]) || 'parent'
-                this.treeNodes = this.buildTree(res.items || [], this.parentField)
-            } finally { this.loading = false }
+            this.setupFilters(this.typeDefs[t] || {})
+            this.refresh()
         },
         // 引用筛选：类型的每个 ref/refs 字段一项（自引用除外 —— 那种类型的列表本身就是树）。
         // 目标类型声明了 tree capability → 用分类树选（含子树，多字段 AND）；
@@ -285,40 +219,21 @@ export default {
             for (const f of def.fields || []) {
                 if (f.kind !== 'ref' && f.kind !== 'refs') continue
                 if (f.to === name) continue
-                const tdef = this.typeDefs[f.to] || {}
-                const item = {
+                this.filters.push({
                     field: f.name, to: f.to, label: f.label || f.name,
-                    tree: !!this.selfRefField(tdef), nodes: [], options: [],
-                    active: 0, activeLabel: '', loading: false, loaded: false,
-                }
-                this.filters.push(item)
-                if (item.tree) this.loadFilterTree(item)
+                    options: [], active: 0, activeLabel: '', loading: false, loaded: false,
+                })
             }
         },
-        // treeParent 服务端要求显式给父字段；它来自类型定义的 admin.tree（展示提示）
-        treeParent(type) {
-            const def = this.typeDefs[type] || {}
-            return (def.admin && def.admin.tree) || ''
-        },
-        // 树筛选的数据源（全量, 前端拼树 —— 分类量级小）
-        async loadFilterTree(ft) {
-            try {
-                const res = await window.$api.tree(ft.to, this.treeParent(ft.to))
-                const pf = this.selfRefField(this.typeDefs[ft.to]) || 'parent'
-                ft.nodes = this.buildTree(res.items || [], pf)
-            } catch (_) {}
-        },
-        // 非树筛选：打开时先给一批（不然得先打字才看得到选项），之后走远程搜索。
+        // 打开时先给一批候选（不然得先打字才看得到选项）; 过滤由组件的 filterable 在本地做
+        //（没有检索端点 —— 内核不带全文检索; 候选是分类/地区这类小集合）。
         onFilterOpen(f) {
-            if (!f.tree && !f.loaded) this.searchFilterRef(f, '')
+            if (!f.loaded) this.loadFilterRef(f)
         },
-        async searchFilterRef(f, q) {
+        async loadFilterRef(f) {
             f.loading = true
             try {
-                // 预载（q 为空）走列表端点 —— 检索端点的 q 必填（空查询不是检索）
-                const res = q
-                    ? await window.$api.search({ q: q, type: f.to, page: 1, size: 50 })
-                    : await window.$api.nodes(f.to, { page: 1, size: 50, sort: '-id', expand: '*' })
+                const res = await window.$api.nodes(f.to, { page: 1, size: 100, sort: '-id' })
                 f.options = (res.items || []).map(n => ({ id: n.id, label: this.titleOf(n) + ' #' + n.id }))
                 f.loaded = true
             } catch (_) {
@@ -335,33 +250,16 @@ export default {
             f._ids = id ? [id] : null
             this.applyFilters()
         },
-        // 选了分类树里的一个节点: 它和整棵子树都算命中
-        pickTreeNode(ft, n) {
-            ft.active = n.id
-            ft.activeLabel = this.titleOf(n)
-            ft._ids = this.collectSubtree(n)
-            this.setTreeCurrent(ft, n.id)
-            this.closeFilterPopover(ft)
-            this.applyFilters()
-        },
         clearFilter(ft) {
             ft.active = 0
             ft.activeLabel = ''
             ft._ids = null
-            this.setTreeCurrent(ft, null)
             this.applyFilters()
         },
         applyFilters() {
             this.query.filter = this.combineFilters()
             this.query.page = 1
             this.refresh()
-        },
-        // el-tree 的 current-node-key 只在初始化时生效: 之后选中/清除都得显式 setCurrentKey,
-        // 否则选过分类再点“全部”, 旧分类依然亮着。
-        setTreeCurrent(ft, key) {
-            const ref = this.$refs['tree-' + ft.field]
-            const tree = Array.isArray(ref) ? ref[0] : ref
-            if (tree && tree.setCurrentKey) tree.setCurrentKey(key)
         },
         closeFilterPopover(ft) {
             const ref = this.$refs['fp-' + ft.field]
@@ -379,34 +277,11 @@ export default {
             if (parts.length === 1) return parts[0]
             return '(and ' + parts.join(' ') + ')'
         },
-        collectSubtree(n) {
-            const ids = [n.id]
-            const walk = (node) => {
-                ;(node.children || []).forEach(c => { ids.push(c.id); walk(c) })
-            }
-            walk(n)
-            return ids
-        },
-        // 平铺节点列表 → 树（无 parent / parent 缺失 = 根）
-        buildTree(items, parentField) {
-            const map = {}
-            items.forEach(n => { map[n.id] = { ...n, children: [] } })
-            const roots = []
-            items.forEach(n => {
-                const node = map[n.id]
-                const pid = n.fields && n.fields[parentField]
-                const parent = pid && map[pid]
-                if (parent) parent.children.push(node)
-                else roots.push(node)
-            })
-            return roots
-        },
         async refresh() {
             if (!this.query.type) return
             this.loading = true
             try {
-                const params = { page: this.query.page, size: this.query.size, sort: '-id', expand: '*' }
-                if (this.query.q) params.q = this.query.q
+                const params = { page: this.query.page, size: this.query.size, sort: '-id' }
                 if (this.query.filter) params.filter = this.query.filter
                 const res = await window.$api.nodes(this.query.type, params)
                 this.rows = res.items || []
@@ -414,15 +289,8 @@ export default {
             } finally { this.loading = false }
         },
         onPageChange(p) { this.query.page = p; this.refresh() },
-        rebuildSearch() {
-            this.rebuilding = true
-            window.$api.post('/admin/search/rebuild').then(() => {
-                ElMessage.success('索引已重建')
-                this.refresh()
-            }).catch(() => {}).finally(() => { this.rebuilding = false })
-        },
         fmt(s) { return s ? s.replace('T', ' ').slice(0, 16) : '' },
-        // 列表标题: 统一走 $api.refLabel（title 列 → slug → 类型字段序兜底 → expand 合成）
+        // 列表标题: 统一走 $api.refLabel（admin.columns 首个非空 → 字段序 → expand 合成）
         titleOf(r) {
             return window.$api.refLabel(r, this.typeDefs[r.type] || null)
         },

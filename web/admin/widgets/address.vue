@@ -1,13 +1,14 @@
-<!-- kind slug：URL 段；编辑 = 等宽输入 + 提示，列表 = code。
-     文件名就是 kind 名（web/admin/widgets/slug.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
+<!-- kind address：节点的地址（URL 段）。
+     文件名就是 kind 名（web/admin/widgets/address.vue），mode="edit" 编辑 / mode="cell" 只读。
+     这个字段由 capabilities.addressable 注入（站点声明不了）—— 全表唯一, 留空表示"没有地址"。 -->
 <template>
     <span v-if="mode === 'cell'" class="w-cell w-slug">{{ modelValue }}</span>
     <el-input v-else :model-value="modelValue === undefined || modelValue === null ? '' : modelValue"
-        placeholder="英文/数字/连字符，如 about-us" @update:model-value="emitValue($event)" />
+        placeholder="URL 段, 如 about-us（留空 = 没有地址）" @update:model-value="emitValue($event)" />
 </template>
 <script>
 export default {
-    name: 'WSlug',
+    name: 'WAddress',
     props: {
         modelValue: { default: undefined },
         mode: { type: String, default: 'edit' },      // edit | cell

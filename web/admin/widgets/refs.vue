@@ -1,4 +1,4 @@
-<!-- kind refs：多引用；编辑 = 远程搜索多选，列表 = 展开的显示名列表。
+<!-- kind refs：多引用；编辑 = 可搜索多选（本地过滤候选），列表 = 展开的显示名列表。
      文件名就是 kind 名（web/admin/widgets/refs.vue），mode="edit" 编辑 / mode="cell" 只读。 -->
 <template>
     <span v-if="mode === 'cell'" class="w-cell w-refs">
@@ -8,8 +8,8 @@
         </template>
         <span v-if="!targets.length" class="w-empty">—</span>
     </span>
-    <el-select v-else :model-value="modelValue || []" multiple filterable remote
-        :remote-method="search" :loading="loading" placeholder="搜索并选择多个节点"
+    <el-select v-else :model-value="modelValue || []" multiple filterable
+        placeholder="搜索并选择多个节点"
         style="width:100%" @visible-change="(open) => open && preload()"
         @update:model-value="emitValue($event)">
         <el-option v-for="o in options" :key="o.id" :label="o.label" :value="o.id" />
@@ -46,20 +46,18 @@ export default {
     methods: {
         emitValue(v) { this.$emit('update:modelValue', v) },
         open(t) { this.$emit('open-node', t) },
-        async load(q, sort) {
-            this.loaded = true
+        // 同 ref.vue: 拉一页候选, 过滤交给组件的 filterable（没有检索端点）
+        async load() {
+            this.loaded = true   // 先置位: 下拉连点两次不该拉两遍
             this.loading = true
-            const params = { q: q || '', type: this.field.to, page: 1, size: 50 }
-            if (sort) params.sort = sort
             try {
-                const res = await window.$api.search(params)
+                const res = await window.$api.nodes(this.field.to, { page: 1, size: 100, sort: '-id' })
                 this.found = (res.items || []).map(n => window.Widgets.refOption(n, this.defs))
             } catch (_) { this.found = [] }
             this.loading = false
         },
-        search(q) { return this.load(q) },
-        // 打开下拉先给一批候选（空查询 = 取一批，新的在前）——只在没搜过时预载
-        preload() { if (!this.loaded) this.load('', '-id') },
+        // 返回 promise: 调用方 await 得到"候选真的到了"（而不是"发起了"）
+        preload() { return this.loaded ? undefined : this.load() },
     },
 }
 </script>

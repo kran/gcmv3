@@ -20,7 +20,7 @@
                 </el-form-item>
             </el-form>
             <div style="color:#999;font-size:12px;line-height:1.8;">
-                用户: {{ user?.username }} · 类型: {{ user?.actor?.realm }}<br>
+                用户: {{ displayName }} · 渠道: {{ user?.actor?.realm }}<br>
                 密码归认证插件管（后台不碰凭证）: 这里调 <code>/api/auth/&lt;类型&gt;/bind</code> 换一条认证方式。<br>
                 新密码至少 8 位。
             </div>
@@ -28,7 +28,7 @@
     </div>
 </template>
 <script>
-import { reactive, ref, inject } from 'vue'
+import { computed, reactive, ref, inject } from 'vue'
 import $api from '$api'
 
 export default {
@@ -36,7 +36,8 @@ export default {
         const user = inject('user')
         const form = reactive({
             // 账号默认取当前身份的用户名（也是登录标识; 换标识就改这里）
-            identifier: (user.value && user.value.username) || '',
+            // 账号只是**猜**一个默认值（凭据标识服务端不回传）: 显示名当提示, 用户可改
+            identifier: (user.value && user.value.node ? window.$api.refLabel(user.value.node, null) : '') || '',
             new_password: '', confirm: '',
         })
         const saving = ref(false)
@@ -56,7 +57,12 @@ export default {
             finally { saving.value = false }
         }
 
-        return { user, form, saving, doChange }
+        const displayName = computed(function () {
+            const node = user.value && user.value.node
+            return node ? window.$api.refLabel(node, null) : ''
+        })
+
+        return { user, form, saving, doChange, displayName }
     }
 }
 </script>

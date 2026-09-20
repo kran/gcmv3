@@ -3,20 +3,6 @@
     <el-drawer append-to-body v-model="visibleModel" :title="title"
                size="60%" :before-close="requestClose">
         <el-form>
-            <!-- 显示名是节点列, 不是类型字段（不由 schema 渲染），所以这里手写一份行结构 —
-                 必须与 FieldRenderer 的字段行一致（.fr-item > .fr-label + 控件）;
-                 _tools/check.js render 会比对两者, 改行结构时两边一起改。 -->
-            <!-- 有 admin.display 时标签由业务字段派生 ⇒ 这一行不渲染（业务字段那行就是标签） -->
-            <div v-if="!displayDerived" class="fr-item">
-                <div class="fr-label">
-                    <span>显示</span>
-                    <span class="fr-kind">display</span>
-                    <span class="fr-req">*</span>
-                    <span v-if="displayReadOnly" class="fr-kind">只读</span>
-                </div>
-                <div v-if="displayReadOnly" class="fr-cell">{{ form.display || '（空）' }}</div>
-                <el-input v-else v-model="form.display" placeholder="公共显示文本（列表/搜索/导航显示）" />
-            </div>
             <field-renderer v-if="def" :fields="def.fields" v-model="form.fields"
                             :node="{ fields: form.fields, expand: refExpand }" :defs="defs"
                             :editing="isEdit" :masked="maskedFields" :readonly="readonlyFields" />
@@ -52,7 +38,7 @@ export default {
     data() {
         return {
         refExpand: {},
-            form: { display: '', revision: 0, fields: {} },
+            form: { revision: 0, fields: {} },
             saving: false, def: null,
             initial: '',   // 加载完成时的表单快照（判断"有没有未保存修改"）
             rebaseline: null, // 打开后重设基线的定时器（控件归一化之后再取）
@@ -69,15 +55,6 @@ export default {
             return ((this.def && this.def.fields) || [])
                 .map(function (f) { return f.name })
                 .filter(function (name) { return editable.indexOf(name) < 0 })
-        },
-        // 服务端声明了"哪个字段当标签" ⇒ 客户端不再单独填 display
-        displayDerived() {
-            const def = this.def || {}
-            return !!((def.admin || {}).display)
-        },
-        displayReadOnly() {
-            if (!this.isEdit || !this.node || !this.node.editable) return false
-            return this.node.editable.indexOf('display') < 0
         },
         // 标题在渲染期就会求值, 而 node 只在点开某一行之后才有 ——
         // 调用方（nodes.vue）为了省事把 :is-edit 写成恒 true, 这里必须容忍 node 为空。
@@ -101,10 +78,10 @@ export default {
         },
     },
     methods: {
-        // 快照只含会被提交的东西（display + 声明字段）: refExpand 是回显用的、异步到，
+        // 快照只含会被提交的东西（声明字段）: refExpand 是回显用的、异步到，
         // 不参与比较，否则"刚打开就显示未保存"。
         formSnapshot() {
-            return JSON.stringify({ display: this.form.display || '', fields: this.form.fields || {} })
+            return JSON.stringify({ fields: this.form.fields || {} })
         },
         isDirty() {
             return this.initial !== '' && this.formSnapshot() !== this.initial
@@ -113,7 +90,7 @@ export default {
         // 输出到浏览器控制台（F12）—— 只需要加载时与现在的差异, 不参与业务。
         dirtyDiff() {
             try {
-                const before = JSON.parse(this.initial || '{"display":"","fields":{}}')
+                const before = JSON.parse(this.initial || '{"fields":{}}')
                 const after = JSON.parse(this.formSnapshot())
                 const diff = {}
                 const keys = new Set(Object.keys(before.fields || {}).concat(Object.keys(after.fields || {})))
@@ -124,9 +101,6 @@ export default {
                         diff[k] = { 加载时: was, 现在: now }
                     }
                 })
-                if ((before.display || '') !== (after.display || '')) {
-                    diff.display = { 加载时: before.display, 现在: after.display }
-                }
                 return diff
             } catch (err) {
                 return { 诊断失败: String(err) }
@@ -158,17 +132,17 @@ export default {
             ;((this.def && this.def.fields) || []).forEach(function (f) {
                 if (f.default !== undefined && f.default !== null) defaults[f.name] = structuredClone(f.default)
             })
-            this.form = { display: '', revision: 0, fields: defaults }
+            this.form = { revision: 0, fields: defaults }
             if (this.presetField && this.presetValue) {
                 this.form.fields[this.presetField] = this.presetValue
                 // ref 字段显示名（否则只显示裸 id）
                 if (this.presetLabel) {
-                    // 与 expand 项同形（id/type/display）—— 选择器与单元格共用同一套标签
+                    // 与 expand 项同形 + 自带 label（refLabel 优先用它）—— 选择器与单元格共用标签
                     var fd = ((this.def || {}).fields || []).find((f) => f.name === this.presetField)
                     this.refExpand[this.presetField] = [{
                         id: this.presetValue,
                         type: (fd && fd.to) || '',
-                        display: this.presetLabel,
+                        label: this.presetLabel,
                     }]
                 }
             }
@@ -181,7 +155,6 @@ export default {
             window.$api.node(type, r.id).then((res) => {
                 var full = res.node || res
                 this.form = {
-                    display: full.display || '',
                     revision: full.revision,
                     fields: full.fields || {},
                 }
@@ -215,13 +188,10 @@ export default {
             var declared = {}
             var self = this
             ;((this.def && this.def.fields) || []).forEach(function (f) {
-                if (self.isEdit && f.immutable) return
                 if (editable && editable.indexOf(f.name) < 0) return
                 declared[f.name] = (self.form.fields || {})[f.name]
             })
-            // 派生时 display 由服务端投影（不提交, 也不参与授权判定）
             var body = { fields: declared }
-            if (!this.displayDerived) body.display = this.form.display
             if (this.isEdit) body.revision = this.form.revision
             var p = this.isEdit
                 ? window.$api.updateNode(this.node.type || this.typeName, this.node.id, body)
