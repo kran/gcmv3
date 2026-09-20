@@ -161,6 +161,10 @@ func (s *Site) Engine() core.Engine { return s.engine }
 // Types 类型系统。
 func (s *Site) Types() *types.Types { return s.types }
 
+// BaseDir 站点根目录（库/类型/static/uploads 都在它下面）—— 站点与插件要读写自己的
+// 文件时用它（框架自己不用: 它只知道基于它的固定路径）。
+func (s *Site) BaseDir() string { return s.basedir }
+
 // handle 引擎方法的第一个参数: 绑定请求 ctx ⇒ 客户端断开即取消查询。
 // （nil = 引擎自持句柄, 脱离请求生命周期。）
 func (s *Site) handle(ctx context.Context) *dba.SQL { return s.db.WithCtx(ctx) }
