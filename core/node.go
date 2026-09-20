@@ -124,11 +124,9 @@ type Node struct {
 	// ── 读期事实（web 读层一次算好，随节点下发；引擎与写入路径不关心）──
 	//
 	//	Masked    类型声明里有、但本次响应被读规则裁掉的字段（"看起来空"不等于"没值"）
-	//	Immutable 该类型声明为不可变的字段（谁都不能改，owner 也不例外）
 	//	Editable  本 actor 在此节点上**实际可写**的字段（写侧 Grant ∩ 可读；见 web 授权）
-	Masked    []string `db:"-" json:"masked,omitempty"`
-	Immutable []string `db:"-" json:"immutable,omitempty"`
-	Editable  []string `db:"-" json:"editable,omitempty"`
+	Masked   []string `db:"-" json:"masked,omitempty"`
+	Editable []string `db:"-" json:"editable,omitempty"`
 }
 
 // Field 类型字段值（无 → nil）。

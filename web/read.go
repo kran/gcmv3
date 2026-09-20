@@ -43,11 +43,12 @@ func (c *CmsCtx) Get(typeName string, ref any) (*core.Node, error) {
 	if err != nil || !visible {
 		return nil, err
 	}
+	rawFields := node.Fields // 掩码会把 Fields 换成新 map; 规则求值要用真值
 	err = c.expandAndMask([]*core.Node{node})
 	if err != nil {
 		return nil, err
 	}
-	return node, nil
+	return c.withFacts(node, rawFields, nil), nil
 }
 
 // List 按读规则取一页（limit 0 = 不限）。返回节点与**不受 limit 限制**的总数

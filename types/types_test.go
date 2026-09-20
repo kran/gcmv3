@@ -451,7 +451,7 @@ types:
 }
 
 // select kind: options 必填/去重; 值必须在 options 内。
-func TestCapabilitiesDefaultsAndImmutable(t *testing.T) {
+func TestCapabilitiesDefaultsAndAdmin(t *testing.T) {
 	ts := New()
 	err := ts.Load([]byte(`
 types:
@@ -464,7 +464,7 @@ types:
       - { name: title, kind: text, required: true }
       - { name: state, kind: select, options: [draft, published], default: draft, required: true }
       - { name: position, kind: number, default: 0 }
-      - { name: external_id, kind: text, immutable: true }
+      - { name: external_id, kind: text }
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -479,8 +479,9 @@ types:
 	if err := ts.ValidateFields("article", fields); err != nil {
 		t.Fatal(err)
 	}
-	if err := ts.ValidatePatchFields("article", map[string]any{"external_id": "changed"}); err == nil {
-		t.Fatal("immutable field patch must fail")
+	// 可写性归规则（web 层）, 类型声明里不再有 immutable 这种静态开关
+	if err := ts.ValidatePatchFields("article", map[string]any{"external_id": "changed"}); err != nil {
+		t.Fatalf("patch 一个普通字段该通过: %v", err)
 	}
 	// admin 段的后台展示名与分组（空 = 由后台回退成类型名/排在最前）
 	admin := ts.Defs()["article"].Admin

@@ -42,24 +42,16 @@ func apiSite(t *testing.T) (*Site, *CmsCtx, func(*http.Request)) {
 		node.Fields["author"] = c.Actor().NodeID
 		return nil
 	})
-	site.Type("article").OnUpdate(func(c *CmsCtx, id int64, patch *core.NodePatch, allow *Grant) error {
-		existing, err := c.Engine().GetNode(id)
-		if err != nil || existing == nil {
-			return NotFound("不存在")
-		}
-		author, _ := existing.Fields["author"].(int64)
+	site.Type("article").OnUpdate(func(c *CmsCtx, node *core.Node, _ *core.NodePatch, allow *Grant) error {
+		author, _ := node.Fields["author"].(int64)
 		if author != c.Actor().NodeID {
 			return Forbidden("仅作者本人可改")
 		}
 		allow.Add(types.RolePublic, "title")
 		return nil
 	})
-	site.Type("article").OnDelete(func(c *CmsCtx, id int64) error {
-		existing, err := c.Engine().GetNode(id)
-		if err != nil || existing == nil {
-			return NotFound("不存在")
-		}
-		author, _ := existing.Fields["author"].(int64)
+	site.Type("article").OnDelete(func(c *CmsCtx, node *core.Node) error {
+		author, _ := node.Fields["author"].(int64)
 		if author != c.Actor().NodeID {
 			return Forbidden("仅作者本人可删")
 		}

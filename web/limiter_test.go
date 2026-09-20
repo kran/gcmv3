@@ -159,7 +159,7 @@ func TestAddressDuplicateIsConflict(t *testing.T) {
 		allow.Add(types.RolePublic, "title", "address")
 		return nil
 	})
-	site.Type("article").OnUpdate(func(_ *CmsCtx, _ int64, _ *core.NodePatch, allow *Grant) error {
+	site.Type("article").OnUpdate(func(_ *CmsCtx, _ *core.Node, _ *core.NodePatch, allow *Grant) error {
 		allow.Add(types.RolePublic, "title", "address")
 		return nil
 	})

@@ -8,8 +8,8 @@
 //	                        这些字段"（不碰 = 全部可见; 只影响输出, 不影响筛选/排序）
 //	OnCreate (node, allow)  身份判断 + 声明**客户端可写**的字段 + 就地加工（补 author、
 //	                        改状态）; 规则自己补的字段不参与白名单
-//	OnUpdate (id, patch, allow)  同上
-//	OnDelete (id)           纯身份判断（删除没有字段面）
+//	OnUpdate (node, patch, allow)  同上（node = 当前状态, 原始未掩码）
+//	OnDelete (node)         纯身份判断（删除没有字段面）
 //
 // 返回 error = 拒绝。**想指定状态码就返回 *Error**（web.Unauthorized / Forbidden /
 // Conflict …）; 返回别的 error 视为服务端错误（500 + 日志）—— 规则里的数据库错误、
@@ -44,11 +44,13 @@ type ReadRule func(c *CmsCtx, where *so.Where, hide *Grant) error
 // 不参与白名单（补 author / 补状态是规则的权利, 不是客户端的）。
 type CreateRule func(c *CmsCtx, node *core.Node, allow *Grant) error
 
-// UpdateRule 更新规则。同 CreateRule: patch 里是客户端提交的差量。
-type UpdateRule func(c *CmsCtx, id int64, patch *core.NodePatch, allow *Grant) error
+// UpdateRule 更新规则。patch 里是客户端提交的差量; node 是**这个节点的当前状态**
+// （原始节点, 未经掩码）—— 可写性常常取决于它的字段（"已发布的内容只有管理角色能改"）,
+// 而写入口本来就已经查过它了, 所以直接给, 规则不用自己再查一遍。
+type UpdateRule func(c *CmsCtx, node *core.Node, patch *core.NodePatch, allow *Grant) error
 
-// DeleteRule 删除规则（只有身份判断）。
-type DeleteRule func(c *CmsCtx, id int64) error
+// DeleteRule 删除规则（只有身份判断; node 同 UpdateRule —— 当前状态）。
+type DeleteRule func(c *CmsCtx, node *core.Node) error
 
 // Policy 一个类型的策略。零值 = 全拒。
 type Policy struct {
@@ -179,7 +181,7 @@ func (c *CmsCtx) resolveReadRule(typeName string) (so.Where, []string, error) {
 	}
 	// 按声明顺序算"哪些字段看不到"（输出稳定, 与 Grant 内部的 map 顺序无关）
 	roles := c.Actor().Roles
-	hidden := make([]string, 0, len(def.Fields))
+	var hidden []string
 	for _, field := range def.Fields {
 		if hide.Has(roles, field.Name) {
 			hidden = append(hidden, field.Name)
@@ -254,7 +256,7 @@ func (c *CmsCtx) authorizeCreate(node *core.Node) error {
 	return c.checkWritable(node.Type, submitted, allow)
 }
 
-// authorizeUpdate 过更新规则 + 白名单。node 是已按读范围查到的现存节点。
+// authorizeUpdate 过更新规则 + 白名单。node 是已按读范围查到的现存节点（原始未掩码）。
 func (c *CmsCtx) authorizeUpdate(node *core.Node, patch *core.NodePatch) error {
 	if node == nil {
 		return NotFound("不存在")
@@ -269,7 +271,7 @@ func (c *CmsCtx) authorizeUpdate(node *core.Node, patch *core.NodePatch) error {
 	policy := c.site.policy(node.Type)
 	submitted := fieldNames(patch.Fields)
 	allow := newWriteGrant()
-	err = policy.OnUpdate(c, node.ID, patch, allow)
+	err = policy.OnUpdate(c, node, patch, allow)
 	if err != nil {
 		return err
 	}
@@ -285,7 +287,7 @@ func (c *CmsCtx) authorizeDelete(node *core.Node) error {
 	if err != nil {
 		return err
 	}
-	return c.site.policy(node.Type).OnDelete(c, node.ID)
+	return c.site.policy(node.Type).OnDelete(c, node)
 }
 
 // checkWritable 白名单: 客户端提交的字段必须**既可写又可读**。

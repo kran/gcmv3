@@ -39,23 +39,15 @@ func memberSite(t *testing.T) (*Site, *CmsCtx, *CmsCtx) {
 		node.Fields["author"] = c.Actor().NodeID // 规则自己补的字段不参与白名单
 		return nil
 	})
-	site.Type("article").OnUpdate(func(c *CmsCtx, id int64, _ *core.NodePatch, allow *Grant) error {
-		existing, err := c.Engine().GetNode(id)
-		if err != nil || existing == nil {
-			return NotFound("不存在")
-		}
-		if !isAuthor(c, existing) {
+	site.Type("article").OnUpdate(func(c *CmsCtx, node *core.Node, _ *core.NodePatch, allow *Grant) error {
+		if !isAuthor(c, node) {
 			return Forbidden("仅作者本人可改")
 		}
 		allow.Add(types.RolePublic, "title")
 		return nil
 	})
-	site.Type("article").OnDelete(func(c *CmsCtx, id int64) error {
-		existing, err := c.Engine().GetNode(id)
-		if err != nil || existing == nil {
-			return NotFound("不存在")
-		}
-		if !isAuthor(c, existing) {
+	site.Type("article").OnDelete(func(c *CmsCtx, node *core.Node) error {
+		if !isAuthor(c, node) {
 			return Forbidden("仅作者本人可删")
 		}
 		return nil

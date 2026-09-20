@@ -313,7 +313,7 @@ func TestWritableImpliesReadable(t *testing.T) {
 		}
 		return nil
 	})
-	site.Type("member").OnUpdate(func(_ *CmsCtx, _ int64, _ *core.NodePatch, allow *Grant) error {
+	site.Type("member").OnUpdate(func(_ *CmsCtx, _ *core.Node, _ *core.NodePatch, allow *Grant) error {
 		allow.Add(types.RolePublic, "phone", "name")
 		return nil
 	})
@@ -339,7 +339,7 @@ func TestOwnerWriteGrant(t *testing.T) {
 		*where = so.P("true")
 		return nil
 	})
-	site.Type("article").OnUpdate(func(_ *CmsCtx, _ int64, _ *core.NodePatch, _ *Grant) error {
+	site.Type("article").OnUpdate(func(_ *CmsCtx, _ *core.Node, _ *core.NodePatch, _ *Grant) error {
 		return nil // 什么都不授予: 只有 owner 的 "*" 能过
 	})
 	cms, _ := ctxFor(site)

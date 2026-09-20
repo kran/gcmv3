@@ -41,7 +41,7 @@ func (c *CmsCtx) Create(typeName string, fields core.Fields) (*core.Node, error)
 	if err != nil {
 		return nil, CoreError(err)
 	}
-	return c.readBack(id)
+	return c.readBack(id, nil)
 }
 
 // Update 走更新规则写入, 返回掩码后的节点。
@@ -68,7 +68,8 @@ func (c *CmsCtx) Update(typeName string, id int64, patch *core.NodePatch) (*core
 	if err != nil {
 		return nil, CoreError(err)
 	}
-	return c.readBack(id)
+	// 事实用**这次提交的 patch** 算: 改完状态之后可写集合可能就变了
+	return c.readBack(id, patch)
 }
 
 // Delete 走删除规则, 然后永久删除（被引用则拒绝）。"下线/撤回"不是内核概念 ——
@@ -119,11 +120,11 @@ func (c *CmsCtx) writable(typeName string, id int64) (*core.Node, error) {
 	return node, nil
 }
 
-// readBack 写响应里的节点也按读规则掩码 —— "注册了读规则 ⇒ 输出已裁"对写响应同样
-// 成立（否则写接口就成了掩码的旁路）。
+// readBack 写响应里的节点也按读规则掩码 + 补两个事实 —— "注册了读规则 ⇒ 输出已裁"
+// 对写响应同样成立（否则写接口就成了掩码的旁路）。
 //
 // 这里**不展开**: 写响应的意义是"你刚写的那个节点", 要看引用目标再读一次就行。
-func (c *CmsCtx) readBack(id int64) (*core.Node, error) {
+func (c *CmsCtx) readBack(id int64, patch *core.NodePatch) (*core.Node, error) {
 	node, err := c.site.engine.GetNode(id)
 	if err != nil {
 		return nil, CoreError(err)
@@ -131,5 +132,10 @@ func (c *CmsCtx) readBack(id int64) (*core.Node, error) {
 	if node == nil {
 		return nil, nil
 	}
-	return c.MaskNode(node)
+	rawFields := node.Fields // MaskNode 不改入参, 这里拿到的是真值
+	masked, err := c.MaskNode(node)
+	if err != nil {
+		return nil, err
+	}
+	return c.withFacts(masked, rawFields, patch), nil
 }

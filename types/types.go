@@ -72,7 +72,6 @@ type FieldDef struct {
 	Fields     []FieldDef `yaml:"fields,omitempty" json:"fields,omitempty"`   // kind=object: 子字段（递归）
 	Required   bool       `yaml:"required" json:"required"`
 	Default    any        `yaml:"default,omitempty" json:"default,omitempty"`
-	Immutable  bool       `yaml:"immutable,omitempty" json:"immutable,omitempty"`
 	Transitive bool       `yaml:"transitive" json:"transitive"` // 传递: 可达性遍历（层级 parent）
 }
 
@@ -467,9 +466,6 @@ func (t *Types) ValidatePatchFields(typeName string, fields map[string]any) erro
 		field, ok := FieldByName(td, name)
 		if !ok {
 			return fmt.Errorf("types: %q: unknown field %q", typeName, name)
-		}
-		if field.Immutable {
-			return fmt.Errorf("types: %q: immutable field %q cannot be patched", typeName, name)
 		}
 		if value == nil {
 			if field.Required {
