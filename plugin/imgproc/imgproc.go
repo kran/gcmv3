@@ -189,7 +189,7 @@ func dim(raw string) (int, error) {
 // （小程序/老前端常按这个拼 URL）。
 func parseOSSProcess(process string) (params, bool, error) {
 	p := params{mode: "cover"}
-	for _, segment := range strings.Split(process, ",") {
+	for segment := range strings.SplitSeq(process, ",") {
 		segment = strings.TrimSpace(segment)
 		switch {
 		case segment == "":

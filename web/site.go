@@ -16,12 +16,15 @@ package web
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/kran/cho"
 	"github.com/kran/dba"
@@ -65,12 +68,30 @@ type Site struct {
 	closeErr  error
 }
 
+// Option 装配选项（Open 用）。
+type Option func(*openOptions)
+
+type openOptions struct {
+	logger dba.LogFunc
+}
+
+// WithLogger 换掉 SQL 日志。默认只记**错误与慢查询**, 且不写 SQL 文本与参数 ——
+// SQL 里可能带登录标识这种敏感值（v2 的站点注释里就专门提过这件事）。
+// 排查性能问题时可以传 dba.NewLogger(slog.Default(), 0, true) 把每条 SQL 都打出来。
+func WithLogger(fn dba.LogFunc) Option {
+	return func(options *openOptions) { options.logger = fn }
+}
+
 // Open 开站点: 开库（档位在这里拼死）→ 建引擎的基础表 → 载类型 → 起引擎。
 //
 // schema 是**基础**的（建表 + 索引, 每条 IF NOT EXISTS ⇒ 幂等）, 直接执行一遍;
 // 没有迁移版本管理, 也没有增量更新 —— 那些等真需要时再说。
-func Open(basedir string) (*Site, error) {
-	db, err := openDB(filepath.Join(basedir, dbFile))
+func Open(basedir string, opts ...Option) (*Site, error) {
+	options := openOptions{logger: quietLogger(slog.Default())}
+	for _, opt := range opts {
+		opt(&options)
+	}
+	db, err := openDB(filepath.Join(basedir, dbFile), options.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -103,8 +124,8 @@ func Open(basedir string) (*Site, error) {
 }
 
 // New 便捷入口: 起不来即 panic（站点启动期 fail loud）。
-func New(basedir string) *Site {
-	site, err := Open(basedir)
+func New(basedir string, opts ...Option) *Site {
+	site, err := Open(basedir, opts...)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -152,7 +173,7 @@ func (s *Site) handle(ctx context.Context) *dba.SQL { return s.db.WithCtx(ctx) }
 //	journal_mode  WAL            非 WAL 下读者与写者互撞排他锁 ⇒ 并发下随机失败
 //	foreign_keys  1              级联删除/引用完整性都靠它（删节点清凭据与会话）
 //	busy_timeout  5000           撞锁等待而不是立即 SQLITE_BUSY（dba 不做重试）
-func openDB(path string) (*dba.SQL, error) {
+func openDB(path string, logger dba.LogFunc) (*dba.SQL, error) {
 	dir := filepath.Dir(path)
 	if dir != "" && dir != "." {
 		err := os.MkdirAll(dir, 0o755)
@@ -165,7 +186,24 @@ func openDB(path string) (*dba.SQL, error) {
 	if err != nil {
 		return nil, fmt.Errorf("web: open db: %w", err)
 	}
-	return db.SetLogger(dba.NewLogger(slog.Default(), 0, false)), nil
+	return db.SetLogger(logger), nil
+}
+
+// slowQuery 超过它就记一条警告（默认日志只记这个与错误）。
+const slowQuery = 500 * time.Millisecond
+
+// quietLogger 默认 SQL 日志: **不写 SQL 文本与参数**（可能带登录标识这类敏感值）,
+// 只记错误与慢查询。要全量 SQL 用 web.WithLogger(dba.NewLogger(...))。
+func quietLogger(logger *slog.Logger) dba.LogFunc {
+	return func(ctx context.Context, begin time.Time, _ string, _ []any, err error) {
+		duration := time.Since(begin)
+		switch {
+		case err != nil && !errors.Is(err, sql.ErrNoRows):
+			logger.ErrorContext(ctx, "web: database error", "duration", duration, "err", err)
+		case err == nil && duration >= slowQuery:
+			logger.WarnContext(ctx, "web: slow query", "duration", duration)
+		}
+	}
 }
 
 func loadTypes(path string) (*types.Types, error) {

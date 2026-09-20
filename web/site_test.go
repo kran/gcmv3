@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -163,3 +164,38 @@ func TestCmsCtxRespond(t *testing.T) {
 		t.Fatal("上下文没接上站点")
 	}
 }
+
+// 默认 SQL 日志**不写 SQL 文本与参数**（可能带登录标识）; 只记错误与慢查询。
+func TestQuietSQLLogger(t *testing.T) {
+	site := newTestSite(t)
+	var lines []string
+	// 手动调一次默认 logger, 看它写了什么
+	site.db = site.db.SetLogger(quietLogger(testLogger(&lines)))
+	_, err := site.Engine().CreateNode(site.db, &core.Node{Type: "article", Fields: core.Fields{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = site.db.Add(`SELECT * FROM nope`).FetchList[map[string]any]()
+	if err == nil {
+		t.Fatal("该报错")
+	}
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "INSERT") || strings.Contains(joined, "SELECT") {
+		t.Fatalf("默认日志不该写 SQL 文本: %q", joined)
+	}
+	if !strings.Contains(joined, "database error") {
+		t.Fatalf("错误该记一条: %q", joined)
+	}
+}
+
+// testLogger 收集 slog 输出（不碰全局 logger）。
+func testLogger(lines *[]string) *slog.Logger {
+	return slog.New(slog.NewTextHandler(writerFunc(func(p []byte) (int, error) {
+		*lines = append(*lines, string(p))
+		return len(p), nil
+	}), &slog.HandlerOptions{Level: slog.LevelDebug}))
+}
+
+type writerFunc func([]byte) (int, error)
+
+func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
