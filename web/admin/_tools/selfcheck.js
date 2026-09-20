@@ -39,6 +39,9 @@ const CASES = [
     // 列表请求不静默 ⇒ 非 owner/非 auth 类型会弹全局错误提示
     ['凭据列表静默闸门', 'render', 'js/api.js',
         '{ quiet: true }', '{ quiet: false }'],
+    // 只在 mounted 里加载 ⇒ 换节点仍然显示第一个节点的凭据
+    ['面板随节点刷新闸门', 'render', 'pages/AuthPanel.vue',
+        'nodeId() { this.reload() },', 'nodeId() { return 0 },'],
     // 面板搬进 AuthPanel.vue 了: 注入"根元素丢守卫"（非 owner 会看到别人的凭据）
     ['凭据面板缺 isOwner 守卫闸门', 'render', 'pages/AuthPanel.vue',
         '<div v-if="isOwner" class="auth-block">',

@@ -594,6 +594,12 @@ async function checkRender() {
         if (!/quiet:\s*true/.test(authMethodsSrc)) {
             fail('authMethods 该走静默请求（否则非 owner 类型会弹全局错误）')
         }
+        // 抽屉 DOM 复用（关掉再开另一个节点不重新挂载）⇒ 面板必须在**节点变化时**
+        // 重新加载, 只在 mounted 里加载会一直显示第一个节点的凭据（真实踩过）。
+        const panelWatch = (panelSrc.match(/watch: \{[\s\S]{0,220}?\n    \},/) || [''])[0]
+        if (!/nodeId\s*\(\s*\)\s*\{\s*this\.reload\(\)\s*\}/.test(panelWatch)) {
+            fail('AuthPanel 必须 watch nodeId 并真的重新加载（换节点不重拉 = 显示上一个节点的凭据）')
+        }
 
     }
 

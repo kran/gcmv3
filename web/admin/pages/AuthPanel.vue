@@ -44,28 +44,44 @@ export default {
     },
     data() {
         return {
-            isOwner: false,       // 判不出来就当不是（fail-closed: 宁可不显示）
+            // null = 还没判出来（fail-closed: 不显示）
+            isOwner: null,
             methods: [],          // 已有凭据（方式 + 标识, 永无哈希）
             passwordMethods: [],  // 类型声明过、框架能设口令的方式
             form: { method: '', identifier: '', secret: '' },
         }
     },
-    mounted() { this.load() },
+    // 抽屉的 DOM 是**复用**的（关掉再开另一个节点不会重新挂载）⇒ 只在 mounted 里加载
+    // 会一直显示第一个节点的凭据（真实踩过）。身份判一次就够（actor 一次会话里不变）,
+    // 凭据随节点变。
+    mounted() {
+        window.$api.me().then((me) => {
+            var roles = (me && me.actor && me.actor.roles) || []
+            this.isOwner = roles.indexOf('owner') >= 0
+            if (this.isOwner) this.load()
+        }).catch(() => { this.isOwner = false })
+    },
+    watch: {
+        nodeId() { this.reload() },
+        type() { this.reload() },
+    },
     methods: {
-        // load 判身份（owner 才显示）+ 拉凭据。两层都 fail-closed: 任何一步失败就
-        // 保持不显示 —— 附加面板不该因为它自己把人挡在编辑之外。
+        // reload 换节点时清空再生效: 先清（免得旧数据在新节点上闪一下, 甚至被误操作）,
+        // 再拉新的。非 owner 不清也没意义（面板根本不显示）。
+        reload() {
+            this.methods = []
+            this.passwordMethods = []
+            this.form = { method: '', identifier: '', secret: '' }
+            if (this.isOwner) this.load()
+        },
+        // load 拉凭据（静默: 拿不到就保持不显示 —— 附加面板不该把人挡在编辑之外）。
         load() {
-            window.$api.me().then((me) => {
-                var roles = (me && me.actor && me.actor.roles) || []
-                this.isOwner = roles.indexOf('owner') >= 0
-                if (!this.isOwner) return
-                window.$api.authMethods(this.type, this.nodeId).then((res) => {
-                    this.methods = res.methods || []
-                    this.passwordMethods = res.password_methods || []
-                    if (!this.form.method && this.passwordMethods.length) {
-                        this.form.method = this.passwordMethods[0]
-                    }
-                }).catch(() => {})
+            window.$api.authMethods(this.type, this.nodeId).then((res) => {
+                this.methods = res.methods || []
+                this.passwordMethods = res.password_methods || []
+                if (!this.form.method && this.passwordMethods.length) {
+                    this.form.method = this.passwordMethods[0]
+                }
             }).catch(() => {})
         },
         // save 设置/重置口令（服务端改完会踢掉该账号所有会话）。
