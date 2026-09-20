@@ -17,32 +17,11 @@ package core
 
 import (
 	"encoding/json"
-	"fmt"
+	"strconv"
 
 	"github.com/kran/gcmv3/types"
+	"github.com/spf13/cast"
 )
-
-// uniqView 唯一字段的取值视图: 标量是值, 引用是目标 id（int64 或 []int64）。
-//
-// create 从 splitFields 的 (scalar, refs) 拼; patch 从"读投影（引用 id 已在
-// fields 里）+ patch"拼 —— 两边都给同一个形状, projectUniq 不必知道来源。
-func uniqView(scalar map[string]any, refs map[string][]int64) map[string]any {
-	view := make(map[string]any, len(scalar)+len(refs))
-	for name, value := range scalar {
-		view[name] = value
-	}
-	for name, ids := range refs {
-		switch len(ids) {
-		case 0:
-			// 没落边 = 这个引用是空的（不设 key ⇒ 投影时当"缺失"）
-		case 1:
-			view[name] = ids[0]
-		default:
-			view[name] = ids // 多值: 由类型校验挡在门外（refs 不许当唯一键）
-		}
-	}
-	return view
-}
 
 // projectUniq 算唯一键（类型没声明 unique ⇒ 返回 nil）。
 func (s *GCM) projectUniq(td types.TypeDef, view map[string]any) *string {
@@ -68,35 +47,20 @@ func (s *GCM) projectUniq(td types.TypeDef, view map[string]any) *string {
 	return &text
 }
 
-// uniqPart 一个部分 → 字符串。缺失/空值/引用没落边 ⇒ ok=false。
+// uniqPart 一个部分 → 字符串。
+//
+// 一切转字符串（要的就是这个）: 数字/布尔/文本一视同仁; 引用是目标 id（int64 或
+// []int64 —— 单引用就是单元素, 在这里拆开）。
+//
+// 空字符串 = "没填" ⇒ ok=false（"没填全 = 不约束"）。这条规则只有一处, 所以
+// create 与 patch 不可能对"什么算空"有不同理解。
 func uniqPart(value any) (string, bool) {
-	switch typed := value.(type) {
-	case nil:
-		return "", false
-	case string:
-		if typed == "" {
-			return "", false
+	if ids, ok := value.([]int64); ok {
+		if len(ids) != 1 {
+			return "", false // 多值当唯一键: 类型校验已拒, 这里兜底不约束
 		}
-		return typed, true
-	case int64:
-		return fmt.Sprintf("%d", typed), true
-	case int:
-		return fmt.Sprintf("%d", typed), true
-	case float64:
-		if typed == 0 {
-			return "", false
-		}
-		return fmt.Sprintf("%d", int64(typed)), true
-	case bool:
-		if !typed {
-			return "", false
-		}
-		return "true", true
-	case []int64:
-		if len(typed) != 1 {
-			return "", false // 多值引用当唯一键 —— 类型校验已经拒了, 这里兜底不约束
-		}
-		return fmt.Sprintf("%d", typed[0]), true
+		return strconv.FormatInt(ids[0], 10), true
 	}
-	return "", false
+	text := cast.ToString(value)
+	return text, text != ""
 }

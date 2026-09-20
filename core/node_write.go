@@ -17,7 +17,6 @@ import (
 
 	"github.com/kran/dba"
 	"github.com/kran/gcmv3/types"
-	"github.com/spf13/cast"
 )
 
 var (
@@ -98,7 +97,14 @@ func (s *GCM) CreateNode(db *dba.SQL, n *Node) (int64, error) {
 		node.Fields = scalar
 		// 类型内唯一键: 从**拆分后的视图**算（引用 id 是 splitFields 给现成的 ——
 		// 不额外查库）。任一唯一字段为空 ⇒ nil ⇒ 不参与唯一。
-		node.Uniq = s.projectUniq(td, uniqView(scalar, refs))
+		view := map[string]any{}
+		for name, value := range scalar {
+			view[name] = value
+		}
+		for name, ids := range refs {
+			view[name] = ids
+		}
+		node.Uniq = s.projectUniq(td, view)
 		result, err := tx.Insert("nodes", &node).Exec()
 		if err != nil {
 			return duplicate(err)
@@ -174,38 +180,21 @@ func (s *GCM) PatchNode(db *dba.SQL, id int64, patch *NodePatch) error {
 			return nil
 		}
 
-		// 唯一键: 现有字段视图（readNode 已注入引用 id）叠上这次 patch 的标量,
-		// 引用部分用 patch 里的目标 id（没动的沿用现有的）。同一个 UPDATE 写列 ——
-		// 不会出现"节点改了、键没跟上"的中间态。
-		if len(td.Capabilities.Unique) > 0 {
-			merged := map[string]any{}
-			for name, value := range existing.Fields {
-				merged[name] = value
-			}
-			for name, value := range scalarPatch {
-				merged[name] = value
-			}
-			uniqRefs := map[string][]int64{}
-			for _, name := range td.Capabilities.Unique {
-				if field, ok := types.FieldByName(td, name); ok && s.types.IsRefKind(field.Kind) {
-					if ids, ok := refPatch[name]; ok {
-						uniqRefs[name] = ids // 这次改了它
-						continue
-					}
-					if id := cast.ToInt64(existing.Fields[name]); id > 0 {
-						uniqRefs[name] = []int64{id} // 没动: 沿用现状（readNode 给的 id）
-					}
-				}
-			}
-			view := uniqView(merged, uniqRefs)
-			// 标量部分要以**合并后**的值为准（uniqView 里 merged 已经是合并后的）
-			for _, name := range td.Capabilities.Unique {
-				if field, ok := types.FieldByName(td, name); ok && !s.types.IsRefKind(field.Kind) {
-					view[name] = merged[name]
-				}
-			}
-			cols["uniq"] = s.projectUniq(td, view)
+		// 唯一键: 把"现状 + 这次改动"拼成一个视图, 交给同一个 projectUniq。
+		//   现状: readNode 已经把引用 id 注入 fields（没动的引用照旧）
+		//   改动: 标量用 scalarPatch; 引用用 refPatch（**归一化后的目标 id** ——
+		//         原始值可能是地址, 那会和 create 那条路算出不同的键）
+		view := map[string]any{}
+		for name, value := range existing.Fields {
+			view[name] = value
 		}
+		for name, value := range scalarPatch {
+			view[name] = value
+		}
+		for name, ids := range refPatch {
+			view[name] = ids
+		}
+		cols["uniq"] = s.projectUniq(td, view)
 
 		cols["updated_at"] = nowValue()
 		cols["revision"] = dba.Expr(`revision + 1`)
