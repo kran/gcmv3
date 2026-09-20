@@ -61,9 +61,10 @@
                         @update:model-value="set(f.name, $event)" />
                 </div>
 
-                <!-- 只读叶值：走组件的 cell 模式（与列表同一套渲染, 不给输入框） -->
+                <!-- 只读叶值：不给输入框, 走组件的 **view 模式**（只读详情 —— 看全, 不截断;
+                     cell 是列表用的紧凑形态）。掩码字段走上面的占位行, 两者语义不同。 -->
                 <div v-else-if="isReadOnly(f) && widget(f)" class="fr-cell">
-                    <component :is="widget(f)" mode="cell" :field="f" :defs="defs" :node="node" />
+                    <component :is="widget(f)" mode="view" :field="f" :defs="defs" :node="node" />
                 </div>
 
                 <!-- 叶值：kind 名对应的组件（编辑模式） -->
@@ -210,7 +211,7 @@ function defaultItem(item) {
 <style>
 .fr-item { margin-bottom: 12px; width: 100%; min-width: 0; }
 .fr-cell { padding: 4px 8px; border-radius: 4px; background: #f9fafb; border: 1px solid #eee; }
-.fr-readonly { opacity: .7; pointer-events: none; }
+.fr-readonly { opacity: .75; }
 /* 被读规则裁掉的字段: 占位要显眼但不像错误（它是正常的状态, 不是故障） */
 .fr-masked-cell { color: #a19f9d; font-style: italic; }
 .fr-masked .fr-kind:last-child { color: #a19f9d; }

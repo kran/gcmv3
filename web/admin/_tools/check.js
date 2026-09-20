@@ -513,6 +513,17 @@ async function checkRender() {
     if (fieldRows.length !== 4) fail('字段行数 = ' + fieldRows.length + '（期望 3 字段 + 1 嵌套）')
     else pass('字段行按 schema 渲染（含嵌套 object）')
 
+    // 只读字段（editable 之外）: 必须走 view 模式 —— cell 是列表用的紧凑形态,
+    // 在表单里会把长文本/富文本截断（用户看不到全文）。掩码字段走占位行, 两者不同。
+    const readonlySrc = read(path.join(ADMIN_DIR, 'pages/FieldRenderer.vue'))
+    if (!/isReadOnly\(f\)[^>]*\n?[^>]*mode="view"/.test(readonlySrc) && !/mode="view"/.test(readonlySrc)) {
+        fail('只读字段没有走 view 模式（列表用的 cell 会截断长文本）')
+    }
+    // 只读的值要能选中复制、引用链接要能点开 ⇒ 不能 pointer-events: none
+    if (/\.fr-readonly\s*\{[^}]*pointer-events\s*:\s*none/.test(readonlySrc)) {
+        fail('只读行写了 pointer-events: none —— 值不能选中复制、引用链点不开')
+    }
+
     // ② NodeEditDialog 里的 display 行（手写）必须与字段行同构
     const NodeEditDialog = await loadComponent('/pages/NodeEditDialog.vue')
     const dialogHost = mount(NodeEditDialog.default || NodeEditDialog, {
@@ -851,6 +862,33 @@ async function checkRender() {
         }
     }
     pass('13 个真实组件在 cell 模式下渲染出了正确的值（文本/图片）')
+
+    // ⑨b **只读详情（view）不能截断**: cell 是列表用的紧凑形态, 表单里的只读字段
+    //     必须看全（真实问题: 富文本/多行只读时被压成一行截断, 用户看不到全文）。
+    renderErrors.length = 0
+    const longText = 'x'.repeat(200) + '结尾'
+    for (const kind of ['text', 'textarea', 'richtext']) {
+        const host = mount({
+            render() {
+                return Vue.h(sandbox.Widgets.resolve(kind), {
+                    mode: 'view', modelValue: longText, field: { kind, name: 'body' }, defs: {},
+                })
+            },
+        }, {}, stubs)
+        await tick()
+        // 富文本走 v-html ⇒ 内容在 innerHTML 上（不在 text 节点里）
+        const shown = walk(host).map(n => (n.text || '') + ((n.props && n.props.innerHTML) || '')).join('')
+        if (shown.indexOf('结尾') < 0) {
+            fail(kind + ' 的只读详情把内容截断了（mode=view 必须看全）: ' + JSON.stringify(shown.slice(0, 40)))
+        } else if (!shown) {
+            fail(kind + ' 的只读详情什么都没渲染')
+        }
+    }
+    if (renderErrors.length) {
+        fail('只读详情渲染报错: ' + renderErrors.join(' / '))
+    } else {
+        pass('只读详情（view）: 文本/多行/富文本都显示完整内容（不截断）')
+    }
     // ⑩ 编辑器链路（穿透异步组件）：真实组件里改值 → 表单收到 update:modelValue。
     //    监听器要穿过 defineAsyncComponent 才到得了 FieldRenderer —— 这里断了，
     //    编辑会"看着能打字、保存却是空值"，没有任何报错。
