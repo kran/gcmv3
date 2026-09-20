@@ -40,6 +40,11 @@ window.$api = {
     authSet:     function (type, id, body) { return Panel.post('/admin/auth/' + type + '/' + id, body) },
     authRemove:  function (type, id, method) { return Panel.del('/admin/auth/' + type + '/' + id + '/' + method) },
 
+    // 反向引用列表（admin.inbounds）—— 静默: 拿不到就整块不显示
+    inbounds: function (type, id) {
+        return Panel.get('/admin/inbounds/' + type + '/' + id, null, { quiet: true })
+    },
+
     // refLabel: 节点显示名（任何消费端统一）— 后台列表/引用选择器用。
     // 优先级: 合成节点自带的 label（预置值回显）→ 类型 **admin.columns** 里第一个非空标量
     //        → 类型字段序里第一个非空字符串标量 → expand 引用合成 → #id。

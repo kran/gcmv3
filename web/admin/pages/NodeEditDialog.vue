@@ -11,6 +11,10 @@
                  非 auth 类型（signup/article/banner…）没有凭据这回事。 -->
             <auth-panel v-if="showsAuthPanel" :type="editingType" :node-id="node.id" />
 
+            <!-- 反向引用（admin.inbounds）: "谁引用我"。只在类型声明了 inbounds 且编辑已有
+                 节点时出现; 数据现查（只读, 走读入口 ⇒ 读规则照旧生效）。 -->
+            <inbound-panel v-if="showsInbounds" :type="editingType" :node-id="node.id" :defs="defs" />
+
             <p v-if="maskedFields.length" class="fr-hint">
                 有 {{ maskedFields.length }} 个字段你看不到（读规则裁掉了）—— 保存不会动它们。
             </p>
@@ -36,6 +40,7 @@ export default {
     components: {
         FieldRenderer: Vue.defineAsyncComponent(() => window.Panel.loadComponent('pages/FieldRenderer.vue')),
         AuthPanel: Vue.defineAsyncComponent(() => window.Panel.loadComponent('pages/AuthPanel.vue')),
+        InboundPanel: Vue.defineAsyncComponent(() => window.Panel.loadComponent('pages/InboundPanel.vue')),
     },
     props: {
         visible: { type: Boolean, required: true },
@@ -89,6 +94,16 @@ export default {
         editingType() { return (this.node && this.node.type) || this.typeName || '' },
         // 凭据面板只在"编辑一个能登录的节点"时出现
         showsAuthPanel() { return this.isEdit && !!this.node && !!this.node.id && this.isAuthType },
+        // 反向引用块: 只看"这个类型的声明里有没有 inbounds"。
+        // 与 isAuthType 同一个坑: **必须是 computed**, 且类型取自正在编辑的节点
+        // （读 this.def 会串台 —— 先开过一个有声明的类型, 再开别的类型时它还留着）。
+        declaresInbounds() {
+            var type = (this.node && this.node.type) || this.typeName
+            var def = this.defs && this.defs[type]
+            var list = def && def.admin && def.admin.inbounds
+            return !!(list && list.length)
+        },
+        showsInbounds() { return this.isEdit && !!this.node && !!this.node.id && this.declaresInbounds },
         isAuthType() {
             // 类型取自**正在编辑的这个节点**（或新建时的 typeName）, 不读 this.def ——
             // def 可能是上一个节点的值（先开员工再开 signup）⇒ 判定串台。

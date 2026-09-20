@@ -553,6 +553,40 @@ async function checkRender() {
     // ② NodeEditDialog 里的 display 行（手写）必须与字段行同构
     const NodeEditDialog = await loadComponent('/pages/NodeEditDialog.vue')
 
+    // 反向引用块: 与凭据面板同一套路 —— 抽屉里放组件 + 类型守卫在**computed**里
+    // （放 methods 就是函数对象 ⇒ v-if 恒真; 读 this.def 会串台）。
+    {
+        const dialogSrc2 = read(path.join(ADMIN_DIR, 'pages/NodeEditDialog.vue'))
+        const panelSrc2 = read(path.join(ADMIN_DIR, 'pages/InboundPanel.vue'))
+        const tag = (dialogSrc2.match(/<inbound-panel[^>]*>/) || [''])[0]
+        if (!tag) {
+            fail('抽屉里找不到 <inbound-panel>')
+        } else if (!/showsInbounds|declaresInbounds/.test(tag)) {
+            fail('反向引用块没有类型守卫: ' + tag)
+        }
+        const opts2 = NodeEditDialog.default || NodeEditDialog
+        for (const name of ['declaresInbounds', 'showsInbounds']) {
+            if (typeof opts2.computed[name] !== 'function') {
+                fail(name + ' 必须是 computed（放 methods 里 v-if 恒真）')
+            }
+        }
+        const declRaw = (dialogSrc2.match(/declaresInbounds\(\) \{[\s\S]{0,420}?\n        \},/) || [''])[0]
+        const decl = declRaw.replace(/\/\/[^\n]*/g, '')
+        if (!/this\.defs/.test(decl)) {
+            fail('declaresInbounds 该按 this.defs[节点类型] 判断')
+        }
+        if (/this\.def\b/.test(decl)) {
+            fail('declaresInbounds 读了 this.def（会串台: 上一个类型的声明还留着）')
+        }
+        if (!/inbounds\b/.test(panelSrc2)) {
+            fail('InboundPanel.vue 里找不到 inbounds 请求')
+        }
+        // 面板必须跟着节点重新查（抽屉 DOM 复用, 换节点不重挂）
+        if (!/nodeId\(\) \{ this\.load\(\) \}/.test(panelSrc2)) {
+            fail('InboundPanel 必须 watch nodeId 并重新加载（否则显示上一个节点的）')
+        }
+    }
+
     // 登录凭据: 面板独立成 AuthPanel.vue（自持数据/动作/样式）, 抽屉只决定放不放它。
     //
     // 三层都要钉住:

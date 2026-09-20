@@ -42,6 +42,12 @@ const CASES = [
     // 只在 mounted 里加载 ⇒ 换节点仍然显示第一个节点的凭据
     ['面板随节点刷新闸门', 'render', 'pages/AuthPanel.vue',
         'nodeId() { this.reload() },', 'nodeId() { return 0 },'],
+    // 反向引用块掉进 methods ⇒ v-if 恒真（整个抽屉每次都去查）
+    ['inbounds 块必须在 computed 闸门', 'render', 'pages/NodeEditDialog.vue',
+        'showsInbounds() {', 'showsInboundsFn() {'],
+    // 反向引用面板换节点不重查 ⇒ 显示上一个节点的入边
+    ['inbounds 面板随节点刷新闸门', 'render', 'pages/InboundPanel.vue',
+        'nodeId() { this.load() },', 'nodeId() { return 0 },'],
     // 面板搬进 AuthPanel.vue 了: 注入"根元素丢守卫"（非 owner 会看到别人的凭据）
     ['凭据面板缺 isOwner 守卫闸门', 'render', 'pages/AuthPanel.vue',
         '<div v-if="isOwner" class="auth-block">',
