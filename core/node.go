@@ -125,8 +125,13 @@ type Node struct {
 	//
 	//	Masked    类型声明里有、但本次响应被读规则裁掉的字段（"看起来空"不等于"没值"）
 	//	Editable  本 actor 在此节点上**实际可写**的字段（写侧 Grant ∩ 可读；见 web 授权）
-	Masked   []string `db:"-" json:"masked,omitempty"`
-	Editable []string `db:"-" json:"editable,omitempty"`
+	//
+	// **不下发 omitempty**: 两个事实都必须是**数组**（空就是 `[]`）——
+	// "字段不在响应里"曾经被解释成"没有限制"，于是 editable 一缺席, 前端就把
+	// 只读表单画成可编辑的（fail-open: 界面给控件、一存 403）。缺 facts 不是
+	// "随便写"，所以它不能没有答案。
+	Masked   []string `db:"-" json:"masked"`
+	Editable []string `db:"-" json:"editable"`
 }
 
 // Field 类型字段值（无 → nil）。

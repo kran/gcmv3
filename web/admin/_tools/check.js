@@ -647,6 +647,40 @@ async function checkRender() {
     if (renderErrors.length) fail('NodeEditDialog 在 node=null + isEdit=true 下渲染报错: ' + renderErrors[0])
     else pass('NodeEditDialog 在 node=null + isEdit=true 下不报错（nodes.vue 的真实用法）')
 
+    // ③a-2 **缺 facts ⇒ 全只读**（fail-closed）。
+    //
+    // 真实踩过: staff 类型没有写规则 ⇒ 服务端不给 editable ⇒ 前端把"没有事实"读成
+    // "没有限制", 于是"角色"一行是勾选框, 一存 403。
+    //
+    // 这里直接调 computed（不挂载、不发请求）: 挂载式断言踩过一次**假绿** ——
+    // visible 初始为 true 不会触发 watcher, 详情压根没加载, 注入故障也照样通过。
+    {
+        const opts = NodeEditDialog.default || NodeEditDialog
+        const staffFields = [
+            { name: 'name', kind: 'text', label: '姓名' },
+            { name: 'roles', kind: 'multiselect', label: '角色', options: ['owner', 'admin'] },
+        ]
+        const def = { fields: staffFields }
+        const call = (detail) => opts.computed.readonlyFields.call(
+            { isEdit: true, detail, def, node: { id: 1, type: 'staff' } })
+        const cases = [
+            // 服务端没给 editable（没有写规则 / 老接口）⇒ **每个字段都只读**
+            ['缺 editable', call({ fields: { name: '站长', roles: ['admin'] } }), 2],
+            // 空数组（服务端明说"一个都不能写"）⇒ 全只读
+            ['editable 为空', call({ fields: {}, editable: [] }), 2],
+            // 给了集合 ⇒ 只读 = 声明字段 − editable
+            ['editable=["name"]', call({ fields: {}, editable: ['name'] }), 1],
+        ]
+        const bad = cases.filter(([, got, want]) => got.length !== want)
+        if (bad.length) {
+            fail('只读字段计算: ' + bad.map(c => c[0] + ' ⇒ ' + JSON.stringify(c[1])).join('; '))
+        } else if (cases[2][1][0] !== 'roles') {
+            fail('editable 里没有的字段才该只读, 实际 ' + JSON.stringify(cases[2][1]))
+        } else {
+            pass('缺 editable 或 editable 为空 ⇒ 整份表单只读（fail-closed, 不把"没有事实"当"没有限制"）')
+        }
+    }
+
     // ③b FieldRenderer 的引用预载：首次打开下拉拉一批；之后（包括用户搜过之后）不再拉 ——
     //     否则打字搜出来的几条会在下次打开时被预载结果覆盖掉。
     const FR = await loadComponent('/pages/FieldRenderer.vue')

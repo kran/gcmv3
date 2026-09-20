@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
@@ -84,8 +85,10 @@ func TestFactsOnWriteResponses(t *testing.T) {
 	if strings.Join(created.Editable, ",") != "title,state" {
 		t.Fatalf("草稿期可写 = %#v（author 由规则补, phone 没授予）", created.Editable)
 	}
-	if created.Masked != nil {
-		t.Fatalf("作者看不到自己被裁的字段: %#v", created.Masked)
+	// 契约: 事实一律是**数组**, 空就是 `[]` —— 不下发/`null` 会被客户端读成
+	// "没有限制"（fail-open）, 所以"没有"也必须看得见。
+	if len(created.Masked) != 0 || created.Masked == nil {
+		t.Fatalf("作者看不到自己被裁的字段, 且该是空数组: %#v", created.Masked)
 	}
 	// 发布之后: editable 立刻只剩 title（用**这次提交的 patch** 求值）
 	_, err := me.Update("article", created.ID, &core.NodePatch{
@@ -164,7 +167,7 @@ func TestRulesSeeUnmaskedNode(t *testing.T) {
 }
 
 // 列表不带这两个事实（逐项求值太贵）。
-func TestFactsAbsentInList(t *testing.T) {
+func TestFactsEmptyInList(t *testing.T) {
 	_, me := factsSite(t)
 	factsArticle(t, me, core.Fields{"title": "草稿"})
 	items, _, err := me.List(core.NodeQuery{Type: "article"}, 0, 0)
@@ -174,12 +177,17 @@ func TestFactsAbsentInList(t *testing.T) {
 	if len(items) == 0 {
 		t.Fatal("该有一条")
 	}
-	if items[0].Editable != nil || items[0].Masked != nil {
-		t.Fatalf("列表不该带事实: %#v", items[0])
+	// 列表不算 facts（逐项跑规则太贵）⇒ 下发空数组: "一个都不能写"是 fail-closed 的
+	// 那个答案。客户端**不该**拿列表行的 editable 判断可写（打开表单要读单节点详情）。
+	if items[0].Editable == nil || len(items[0].Editable) != 0 {
+		t.Fatalf("列表的 editable 该是空数组: %#v", items[0])
+	}
+	if items[0].Masked == nil || len(items[0].Masked) != 0 {
+		t.Fatalf("列表的 masked 该是空数组: %#v", items[0])
 	}
 }
 
-// 规则拒绝更新时 editable 为空（不是"全都可写"）。
+// 规则拒绝更新时 editable 是空数组（不是"全都可写", 也不是缺席）。
 func TestFactsEmptyWhenUpdateDenied(t *testing.T) {
 	site := newPolicySite(t)
 	allowArticleCreate(site)
@@ -195,8 +203,50 @@ func TestFactsEmptyWhenUpdateDenied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Editable != nil {
-		t.Fatalf("被拒时该为空: %#v", created.Editable)
+	if created.Editable == nil || len(created.Editable) != 0 {
+		t.Fatalf("被拒时该是空数组: %#v", created.Editable)
+	}
+}
+
+// JSON 线上形状: 事实必须是**数组**（`[]`）。
+//
+// 这条是防 fail-open 的: 曾经 editable 缺席 ⇒ 前端把只读表单画成可编辑的
+// （真实踩过: 员工表单里"角色"是勾选框）。"没有"必须看得见。
+func TestFactsAreArraysOnTheWire(t *testing.T) {
+	site := newPolicySite(t)
+	allowArticleCreate(site)
+	site.Type("article").OnRead(func(_ *CmsCtx, where *so.Where, _ *Grant) error {
+		*where = so.P("true")
+		return nil
+	})
+	cms := memberCtx(t, site)
+	created, err := cms.Create("article", core.Fields{"title": "甲"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 单节点: 没有更新规则 ⇒ editable = []、没有掩码 ⇒ masked = []
+	one, err := cms.Get("article", created.ID)
+	if err != nil || one == nil {
+		t.Fatalf("get: node=%v err=%v", one, err)
+	}
+	raw, err := json.Marshal(one)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"editable":[]`) || !strings.Contains(string(raw), `"masked":[]`) {
+		t.Fatalf("单节点响应里的事实该是空数组: %s", raw)
+	}
+	// 列表: 不算 facts, 但也给空数组（不给 null、不许缺席）
+	items, _, err := cms.List(core.NodeQuery{Type: "article"}, 0, 0)
+	if err != nil || len(items) == 0 {
+		t.Fatalf("list: %d items, err=%v", len(items), err)
+	}
+	raw, err = json.Marshal(items[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"editable":[]`) || !strings.Contains(string(raw), `"masked":[]`) {
+		t.Fatalf("列表行的事实该是空数组: %s", raw)
 	}
 }
 
@@ -213,8 +263,8 @@ func TestFactsWithoutUpdateRule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.Editable != nil {
-		t.Fatalf("没注册更新规则该没有可写字段: %#v", created.Editable)
+	if created.Editable == nil || len(created.Editable) != 0 {
+		t.Fatalf("没注册更新规则该是空数组: %#v", created.Editable)
 	}
 	// 但 masked 是有的（读规则算出来的）
 	if _, _, err := cms.readRule("article"); err != nil {

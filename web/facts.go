@@ -13,6 +13,10 @@
 //
 //	masked 里的字段: 显示"无权限查看"这类占位, 不要显示值
 //	editable 里没有的字段: 显示值, 但**不可编辑**（只读）
+//
+// 两个事实在任何响应里都是**数组**: `[]` 是"没隐藏 / 一个都不能写"，不是缺席。
+// 列表接口不算它们（逐项跑规则太贵），那里给的是 `[]` —— **别拿列表行判断可写**,
+// 打开表单时要读一次单节点详情。
 package web
 
 import (
@@ -39,9 +43,20 @@ func (c *CmsCtx) withFacts(masked *core.Node, rawFields core.Fields, patch *core
 		// 读规则报错时走不到这里（读入口已经先报了）; 保险起见不编造事实
 		return masked
 	}
-	masked.Masked = hidden
-	masked.Editable = c.editableFields(masked, rawFields, patch, hidden)
+	// 两个事实一律**非 nil**: 空集合要下发成 `[]`，不是 `null`/缺席 ——
+	// 客户端把"缺 editable"读成"没有限制"就是 fail-open（真实踩过: 员工表单里
+	// "角色"是勾选框, 而那个类型根本没有写规则）。
+	masked.Masked = nonNilStrings(hidden)
+	masked.Editable = nonNilStrings(c.editableFields(masked, rawFields, patch, hidden))
 	return masked
+}
+
+// nonNilStrings nil → 空切片（"没有"与"没算"在 JSON 里都得看得见）。
+func nonNilStrings(names []string) []string {
+	if names == nil {
+		return []string{}
+	}
+	return names
 }
 
 // editableFields 求"这个节点上能写哪些字段"。

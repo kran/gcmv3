@@ -25,6 +25,10 @@ const CASES = [
     ['登录渠道下拉闸门', 'render', 'pages/App.vue', ':label="r.name" :value="r.name"', ':label="r.realm" :value="r.realm"'],
     ['编辑器 facts 来自详情闸门', 'render', 'pages/NodeEditDialog.vue',
         'this.detail = full', 'this.detail = null'],
+    // 注入**旧的 fail-open 写法**: 缺 editable 时当成"全都能写"
+    ['缺 editable 不许 fail-open 闸门', 'render', 'pages/NodeEditDialog.vue',
+        'var editable = this.detail.editable || []',
+        "var editable = this.detail.editable || (((this.def && this.def.fields) || []).map(function (f) { return f.name }))"],
     ['只读值没传 modelValue 闸门', 'render', 'pages/FieldRenderer.vue',
         'mode="view" :model-value="get(f.name)"', 'mode="view"'],
     ['widget 收到 view 掉进编辑器闸门', 'render', 'widgets/timestamp.vue',

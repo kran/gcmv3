@@ -85,6 +85,12 @@ func (c *CmsCtx) List(q core.NodeQuery, limit, offset int) ([]*core.Node, int64,
 	if err != nil {
 		return nil, 0, err
 	}
+	// 列表不算 facts（逐项跑规则太贵）⇒ 给 `[]` 而不是 `null`: "没有可写字段"是
+	// fail-closed 的那个答案（客户端据此不会把列表行画成可编辑）。
+	for _, node := range nodes {
+		node.Masked = nonNilStrings(node.Masked)
+		node.Editable = nonNilStrings(node.Editable)
+	}
 	return nodes, total, nil
 }
 

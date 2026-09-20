@@ -9,11 +9,16 @@
             <p v-if="maskedFields.length" class="fr-hint">
                 有 {{ maskedFields.length }} 个字段你看不到（读规则裁掉了）—— 保存不会动它们。
             </p>
+            <p v-if="nothingWritable" class="fr-hint">
+                这个类型在当前身份下**没有可改的字段**（服务端没有写规则或字段全被裁掉）——
+                整份表单只读。
+            </p>
         </el-form>
         <template #footer>
             <div style="display:flex;justify-content:flex-end;gap:8px;">
                 <el-button @click="requestClose()">取消</el-button>
-                <el-button type="primary" :loading="saving" @click="save"><el-icon><Check /></el-icon>保存</el-button>
+                <el-button type="primary" :loading="saving" :disabled="nothingWritable"
+                    @click="save"><el-icon><Check /></el-icon>保存</el-button>
             </div>
         </template>
     </el-drawer>
@@ -54,11 +59,22 @@ export default {
         // 本 actor 在这个节点上不可写的字段 —— 只读展示（服务端算的 editable 之外）
         // 新建时没有节点 ⇒ 没有这组事实（新建的可写集合另说, 由服务端写规则定）
         readonlyFields() {
-            var editable = ((this.detail || this.node) || {}).editable
-            if (!this.isEdit || !editable) return []
+            if (!this.isEdit) return []
+            // 详情还没回来时不下结论（否则会闪一下"全只读"）
+            if (!this.detail) return []
+            // **缺 editable = 什么都不可写**, 不是"随便写" —— 服务端不给 editable 的
+            // 场合正是"这个类型/这个身份没有写规则"（例: staff 后台根本不能改）。
+            // 把"缺 facts"当成"没有限制"就是 fail-open: 界面给控件, 一存 403/422
+            // （真实踩过: 员工表单里"角色"是勾选框）。
+            var editable = this.detail.editable || []
             return ((this.def && this.def.fields) || [])
                 .map(function (f) { return f.name })
                 .filter(function (name) { return editable.indexOf(name) < 0 })
+        },
+        // 编辑时一个字段都写不了（没有写规则, 或规则把字段全裁了）
+        nothingWritable() {
+            if (!this.isEdit || !this.detail) return false
+            return (this.detail.editable || []).length === 0
         },
         // 标题在渲染期就会求值, 而 node 只在点开某一行之后才有 ——
         // 调用方（nodes.vue）为了省事把 :is-edit 写成恒 true, 这里必须容忍 node 为空。
@@ -190,7 +206,10 @@ export default {
             // 只提交本 actor 真的可写的字段（服务端 editable 算好的）—— 提交看不见/不可写的
             // 字段会被写规则拒绝（422: hidden / not writable），整次保存白费。
             // 新建时没有节点事实, 提交全部声明字段（超出的由写规则决定, 见 todo 里的 create 列）。
-            var editable = (this.isEdit && ((this.detail || this.node) || {}).editable) || null
+            // 编辑: 只提交服务端说可写的字段（缺 editable ⇒ 空集, 一个都不提交;
+            //       真提交了就等着 403/422, 那是界面在撒谎）
+            // 新建: null = 不过滤（可写集合只有服务端知道, 由它把关）
+            var editable = this.isEdit ? (((this.detail || this.node) || {}).editable || []) : null
             var declared = {}
             var self = this
             ;((this.def && this.def.fields) || []).forEach(function (f) {
