@@ -354,7 +354,17 @@ function checkAppReturns() {
         console.log('  FAIL pages/App.vue'.padEnd(40) + '模板用到但 setup 没返回: ' + missing.join(', '))
         return 1
     }
-    console.log('  ok   ' + 'App.vue 模板引用的名字都在 setup 的 return 里')
+    // 反方向也要查: **setup 返回的名字必须真的有定义**。少一个就是 mount 时
+    // "ReferenceError: X is not defined" —— 页面整个白屏, 而上面那条（模板 → return）
+    // 照样是绿的。真实踩过: 删旧功能时把 var globalQ 一起删了, return 里还留着。
+    const undeclared = [...returned].filter(name =>
+        !new RegExp('(?:var|let|const|function)\\s+' + name + '\\b').test(src))
+    if (undeclared.length) {
+        console.log('  FAIL pages/App.vue'.padEnd(40) +
+            'setup 返回了没定义的名字（mount 时会 ReferenceError）: ' + undeclared.join(', '))
+        return 1
+    }
+    console.log('  ok   ' + 'App.vue 的 setup 返回与模板引用一一对得上')
     return 0
 }
 
@@ -432,7 +442,8 @@ function makeRenderer(Vue) {
         stubs: ['el-input', 'el-form', 'el-form-item', 'el-button', 'el-select', 'el-option',
             'el-input-number', 'el-date-picker', 'el-switch', 'el-icon', 'el-divider',
             'el-table', 'el-table-column', 'el-checkbox-group', 'el-checkbox', 'el-tag',
-            'el-tabs', 'el-tab-pane'],
+            'el-tabs', 'el-tab-pane', 'el-dropdown', 'el-dropdown-menu', 'el-dropdown-item',
+            'el-dialog', 'el-drawer', 'el-popover', 'el-pagination', 'el-tree', 'el-empty'],
     }
 }
 
@@ -928,6 +939,49 @@ async function checkRender() {
             }
         }
     }
+    // ⑭ App.vue 必须真的 mount 得起来 —— 浏览器里 setup 抛错就是白屏。
+    //
+    // 静态检查（checkAppReturns）挡得住"return 了没定义的名字", 挡不住其它 setup 期抛错
+    // （少个 import、拼错 API、解构错）。真实踩过: 删旧功能时把 var globalQ 一起删了 ——
+    // 页面白屏, 而当时所有闸门都是绿的。
+    //
+    // 环境按 index.html 的真实样子补齐: AppConfig（菜单壳子）、Panel（组件加载器）、
+    // $api（异步的, 用最小 stub 返回形状对的数据）。
+    sandbox.AppConfig = {
+        defaultPage: 'dashboard',
+        menu: [{ key: 'nodes', label: '内容管理', icon: 'Document', route: 'nodes', group: '平台' }],
+    }
+    sandbox.Panel = {
+        loadComponent: (rel) => loadComponent('/' + rel),
+        onError: () => {},                    // App.vue 在这里注册 401 → 登出
+        get: async () => ({}), post: async () => ({}),
+    }
+    sandbox.$api = {
+        me: async () => ({ actor: { node_id: 1, node_type: 'staff', realm: 'staff', roles: ['owner'] },
+            node: { id: 1, type: 'staff', fields: { name: '站长' } } }),
+        types: async () => ({ types: {} }),
+        loginRealms: async () => ({ realms: [] }),
+        get: async () => ({ items: [] }),
+        post: async () => ({}),
+        logout: async () => ({}),
+        refLabel: (n) => (n && n.fields && n.fields.name) || '#1',
+    }
+    renderErrors.length = 0
+    const App = await loadComponent('/pages/App.vue')
+    try {
+        // setup 里抛的错在 Vue 里是**直接冒出来**的（不走 errorHandler）, 所以这里要接住,
+        // 否则闸门以异常结束 —— 也是失败, 但看不见"为什么失败"。
+        mount(App.default || App, {}, stubs)
+        await tick()
+    } catch (err) {
+        renderErrors.push(err && err.message ? err.message : String(err))
+    }
+    if (renderErrors.length) {
+        fail('App.vue 挂载报错（浏览器里就是白屏）: ' + renderErrors.join(' / '))
+    } else {
+        pass('App.vue 能挂载（setup 与模板都不抛错）')
+    }
+
     return failed
 }
 

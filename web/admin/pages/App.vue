@@ -69,7 +69,6 @@
                 </a>
             </nav>
             <div class="topbar-right">
-                <button class="topbar-icon-btn" @click="globalQ && globalSearch()"><el-icon><Search /></el-icon></button>
                 <el-dropdown>
                     <button class="topbar-icon-btn"><el-icon><User /></el-icon></button>
                     <template #dropdown>
@@ -111,6 +110,13 @@ export default {
         // 内容管理（第一个普通菜单）单独 — 类型树/扩展插它后边
         var mainBefore = computed(function () { return mainMenu.value.slice(0, 1) })
         var mainAfter = computed(function () { return mainMenu.value.slice(1) })
+        // 站点面板菜单（HookAdminPanel 注册的页面）—— 动态项, 菜单里单独一组
+        var panelMenu = computed(function () { return menuData.value.filter(function (m) { return m.section === 'panel' }) })
+        // 当前路由是不是面板页（用于高亮）
+        var isPanelActive = computed(function () {
+            return panelMenu.value.some(function (m) { return m.route === route.name })
+        })
+
         // 分组菜单（TokenHub 风格）— 静态项按 group 归组; 动态项（tree/panel）归"管理"
         var menuGroups = computed(function () {
             var order = ['平台', '内容', '管理']
@@ -124,11 +130,6 @@ export default {
             var rest = Object.keys(seen).filter(function (g) { return order.indexOf(g) < 0 }).map(function (g) { return seen[g] })
             return groups.concat(rest)
         })
-        function globalSearch() {
-            if (!globalQ.value) return
-            router.push({ name: 'nodes', query: { q: globalQ.value } })
-        }
-
         var phase = ref('loading')
         var user = ref(null)
         provide('user', user)
@@ -261,7 +262,7 @@ export default {
 
         return {
             phase: phase, user: user, siteName: siteName, pageTitle: pageTitle, routeViewKey: routeViewKey,
-            menuData: menuData, menuGroups: menuGroups, globalQ: globalQ, globalSearch: globalSearch,
+            menuData: menuData, menuGroups: menuGroups, 
             mainMenu: mainMenu, mainBefore: mainBefore, mainAfter: mainAfter, panelMenu: panelMenu,
             isPanelActive: isPanelActive,
             loginForm: loginForm, loginRealms: loginRealms,
