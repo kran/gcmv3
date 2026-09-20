@@ -193,6 +193,7 @@ type params struct {
 // parseParams 解析查询串。三态: (p, true) 要处理 / (p, false) 没带参数 / err 参数非法。
 func parseParams(r *http.Request) (params, bool, error) {
 	q := r.URL.Query()
+	// 旧参数名**响亮报错**（静默忽略 = 页面看着正常、图就是没处理, 最难查）
 	for _, legacy := range []string{"w", "h", "mode", "fmt"} {
 		if q.Get(legacy) != "" {
 			return params{}, false, fmt.Errorf(
