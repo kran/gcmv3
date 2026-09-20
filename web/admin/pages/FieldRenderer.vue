@@ -214,7 +214,7 @@ function defaultItem(item) {
 .fr-cell { padding: 4px 8px; border-radius: 4px; background: #f9fafb; border: 1px solid #eee; }
 .fr-readonly { opacity: .75; }
 /* 被读规则裁掉的字段: 占位要显眼但不像错误（它是正常的状态, 不是故障） */
-.fr-masked-cell { color: #a19f9d; font-style: italic; }
+.fr-masked-cell { color: #a19f9d; font-style: italic; font-size: 12px;}
 .fr-masked .fr-kind:last-child { color: #a19f9d; }
 .fr-item .el-input, .fr-item .el-textarea, .fr-item .el-select,
 .fr-item .el-input-number, .fr-item .el-color-picker { width: 100%; }

@@ -65,6 +65,12 @@ type AdminView struct {
 	// Tree 后台树视图用哪个字段当父（**展示提示**，不是语义能力：自引用 ref 也可能是
 	// "相关文章" ⇒ 不做自动推导）。配合 View: "tree" 使用。
 	Tree string `yaml:"tree,omitempty" json:"tree,omitempty"`
+	// Inbounds 反向引用: 哪些 "类型.字段" 指向**本类型** —— 后台编辑器里显示成只读列表
+	// （"引用我的那些节点": 分类底下有哪些文章）。
+	//
+	// 纯展示声明（与 Columns/Tree 同类）: 不参与校验/策略, 也不落库 ——
+	// 列表走读入口现查（读规则照旧生效, 藏起来的节点不出现）。
+	Inbounds []string `yaml:"inbounds,omitempty" json:"inbounds,omitempty"`
 }
 
 // FieldDef 字段定义。代数声明在字段顶层:
@@ -207,6 +213,10 @@ func (t *Types) Load(raw []byte) error {
 		return err
 	}
 	t.defs = defs
+	// 反向引用声明要在**此刻**校验: defs 齐了才查得到"另一个类型"
+	if err := t.validateInbounds(); err != nil {
+		return err
+	}
 	return nil
 }
 

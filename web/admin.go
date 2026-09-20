@@ -110,6 +110,8 @@ func (s *Site) setupAdmin() {
 			authed.Get("/panels", s.adminPanels)
 			authed.Get("/permissions", s.adminPermissions)
 			authed.Get("/tree/{type}", s.adminTree)
+			// 反向引用（admin.inbounds）: "谁引用我" —— 只读, 走读入口（读规则照旧）
+			authed.Get("/inbounds/{type}/{id}", s.adminInbounds)
 			// 登录凭据管理（**只有 owner** —— 能改别人密码 = 能冒充别人, 所以
 			// 比后台这道的 owner||admin 更严; 判定在每个 handler 里）
 			authed.Get("/auth/{type}/{id}", s.adminAuthList)
