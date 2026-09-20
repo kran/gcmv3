@@ -166,7 +166,8 @@ func TestRemoveAuthMethodKeepsLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	err = gcm.RemoveAuthMethod(nil, "member", "email", "a@x.com")
-	if err == nil || !strings.Contains(err.Error(), "cannot remove last") {
+	// 哨兵错误: 上层靠它把"这是业务规则"和"服务端故障"分开（否则回 500）
+	if !errors.Is(err, ErrLastAuthMethod) {
 		t.Fatalf("err = %v", err)
 	}
 	// 加一条之后就能删了

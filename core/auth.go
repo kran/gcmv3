@@ -20,6 +20,12 @@ import (
 	"github.com/kran/dba"
 )
 
+// ErrLastAuthMethod 不许删掉最后一个凭据 —— 删了这个人再也登不进来。
+//
+// 是**哨兵错误**（不是随手 errors.New）: 上层要能识别它并回 4xx + 一句人话,
+// 而不是当成服务端故障回 500。
+var ErrLastAuthMethod = errors.New("core: auth: 这是最后一条登录凭据, 删掉就再也登不进来了")
+
 // AuthMethod 一条凭据（内核只存不解释）。
 type AuthMethod struct {
 	ID         int64  `db:"id,omitempty" json:"id"`
@@ -95,6 +101,20 @@ func (s *GCM) RegisterAuth(db *dba.SQL, nodeType, method, identifier string, dat
 		return 0, err
 	}
 	return nodeID, nil
+}
+
+// AuthMethodsOf 列出某个节点的全部凭据（按方式、标识排序, 输出稳定）。
+//
+// 不回 data 的内容（AuthMethod.Data 是 json:"-"）—— 调用方要的是"这个人有哪些
+// 登录方式、各自标识是什么"; 哈希永远不会离开进程。
+func (s *GCM) AuthMethodsOf(nodeType string, nodeID int64) ([]AuthMethod, error) {
+	rows, err := s.db.
+		Add(`SELECT * FROM auth_methods WHERE type = #{1} AND node_id = #{2} ORDER BY method, identifier`,
+			nodeType, nodeID).FetchList[AuthMethod]()
+	if err != nil {
+		return nil, fmt.Errorf("core: auth methods of %s#%d: %w", nodeType, nodeID, err)
+	}
+	return rows, nil
 }
 
 // FindAuth 按 (类型, 方式, 标识) 找一条凭据; 没有返回 (nil, nil)。
@@ -190,7 +210,7 @@ func (s *GCM) RemoveAuthMethod(db *dba.SQL, nodeType, method, identifier string)
 			return err
 		}
 		if count == nil || *count <= 1 {
-			return errors.New("core: auth: cannot remove last auth method")
+			return ErrLastAuthMethod
 		}
 		_, err = tx.Delete("auth_methods",
 			`type = #{1} AND method = #{2} AND identifier = #{3}`,

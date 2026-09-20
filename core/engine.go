@@ -78,6 +78,8 @@ type Engine interface {
 	RegisterAuth(db *dba.SQL, nodeType, method, identifier string, data Fields, n *Node) (int64, error)
 	// FindAuth 按 (类型, 方式, 标识) 找凭据; 没有返回 (nil, nil)。
 	FindAuth(nodeType, method, identifier string) (*AuthMethod, error)
+	// AuthMethodsOf 某个节点的全部凭据（不回 data 内容）。
+	AuthMethodsOf(nodeType string, nodeID int64) ([]AuthMethod, error)
 	// AddAuthMethod 给已有节点绑一条凭据（标识被占用 ⇒ 报错）。
 	AddAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, identifier string, data Fields) error
 	// SetAuthMethod 设置/替换凭据（改密码 / 换绑）—— 标识属于别的节点时报错。

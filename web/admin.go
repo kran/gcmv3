@@ -110,6 +110,11 @@ func (s *Site) setupAdmin() {
 			authed.Get("/panels", s.adminPanels)
 			authed.Get("/permissions", s.adminPermissions)
 			authed.Get("/tree/{type}", s.adminTree)
+			// 登录凭据管理（**只有 owner** —— 能改别人密码 = 能冒充别人, 所以
+			// 比后台这道的 owner||admin 更严; 判定在每个 handler 里）
+			authed.Get("/auth/{type}/{id}", s.adminAuthList)
+			authed.Post("/auth/{type}/{id}", s.adminAuthSet)
+			authed.Delete("/auth/{type}/{id}/{method}", s.adminAuthRemove)
 			err := s.engine.Hooks().Fire(HookAdminMount, authed)
 			if err != nil {
 				panic("web: admin mount: " + err.Error())
