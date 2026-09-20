@@ -29,6 +29,8 @@ const CASES = [
     // 非 auth 类型的抽屉不该去问凭据端点（问了就是 400 + 全局错误提示）
     // 判据依赖 this.def ⇒ 先开过一个能登录的节点再开 signup 就会去问端点
     // isAuthType 掉进 methods ⇒ 模板拿到函数对象, 守卫永远为真（真实踩过的那个 bug）
+    ['refLabel 用服务端 display 闸门', 'render', 'js/api.js',
+        'const serverLabel = (n.extra || {}).display', 'const serverLabel = undefined'],
     ['isAuthType 必须在 computed 闸门', 'render', 'pages/NodeEditDialog.vue',
         'isAuthType() {', 'isAuthTypeMovedOut() {'],
     ['isAuthType 依赖 def 闸门', 'render', 'pages/NodeEditDialog.vue',
@@ -37,9 +39,10 @@ const CASES = [
     // 列表请求不静默 ⇒ 非 owner/非 auth 类型会弹全局错误提示
     ['凭据列表静默闸门', 'render', 'js/api.js',
         '{ quiet: true }', '{ quiet: false }'],
-    ['凭据面板缺 isAuthType 守卫闸门', 'render', 'pages/NodeEditDialog.vue',
-        'v-if="isOwner && isAuthType && isEdit && node && node.id"',
-        'v-if="isOwner && isEdit && node && node.id"'],
+    // 面板搬进 AuthPanel.vue 了: 注入"根元素丢守卫"（非 owner 会看到别人的凭据）
+    ['凭据面板缺 isOwner 守卫闸门', 'render', 'pages/AuthPanel.vue',
+        '<div v-if="isOwner" class="auth-block">',
+        '<div class="auth-block">'],
     ['缺 editable 不许 fail-open 闸门', 'render', 'pages/NodeEditDialog.vue',
         'var editable = this.detail.editable || []',
         "var editable = this.detail.editable || (((this.def && this.def.fields) || []).map(function (f) { return f.name }))"],

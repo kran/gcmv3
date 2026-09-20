@@ -47,7 +47,12 @@ window.$api = {
     refLabel: function (n, def) {
         if (!n) { console.log('[refLabel] null node'); return '#?' }
         if (n.label) return n.label
-        // ① 类型**显式声明**的显示名字段（types.yaml 的 admin.display）—— 最可靠
+        // ⓪ **服务端算好的显示名**（extra.display, 框架按类型声明推出, 且只在掩码后的
+        //    字段里取）—— 这是权威, 前端不该再算一遍（两套规则必然漂）。
+        const serverLabel = (n.extra || {}).display
+        if (typeof serverLabel === 'string' && serverLabel.trim()) return serverLabel
+        // ① 下面的都是**兜底**: 给"本地合成/老数据"（没有 extra 的那种, 比如预置值的
+        //    回显节点）用。类型显式声明的显示名字段（types.yaml 的 admin.display）
         const declared = ((def || {}).admin || {}).display
         if (declared) {
             const value = (n.fields || {})[declared]
