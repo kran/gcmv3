@@ -51,14 +51,22 @@ window.Widgets = (function () {
         return (div.textContent || '').replace(/\s+/g, ' ').trim()
     }
 
-    // 时间：库/接口里的统一格式是 UTC（…Z），显示按当前设备本地时间
+    // 时间：时间字段的值是 **Unix 秒**（整数, UTC 绝对时刻）—— 显示按当前设备本地时间。
+    // JS 的 Date 要毫秒, 所以这里 ×1000; 顺手挡住单位错（毫秒级的值明显超界）:
+    // 不猜、不静默显示成 1970 年, 而是把原值亮出来。
     function localTime(value, withTime) {
         if (!value) return ''
-        var date = new Date(value)
+        if (typeof value !== 'number' || !Number.isInteger(value) || value > MAX_UNIX_SECONDS) {
+            return String(value)
+        }
+        var date = new Date(value * 1000)
         if (isNaN(date.getTime())) return String(value)
         var ymd = date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
         return withTime === false ? ymd : ymd + ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes())
     }
+
+    // 与内核 maxTimestamp 对齐（约公元 5138 年）: 超过它就是毫秒/微秒, 不是秒。
+    var MAX_UNIX_SECONDS = 100000000000
 
     // 只取日期（列表里往往只关心哪天）
     function localDate(value) { return localTime(value, false) }

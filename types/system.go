@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"time"
 )
 
 // SystemField 是节点系统列（id / type / revision / fields / created_at /
@@ -17,7 +16,8 @@ type SystemField struct {
 	Name string
 	Ops  QueryOps
 	// Validate 查询值校验。注意查询值域 ≠ 存储值域：id 接受 int/float/数字串，
-	// 时间列接受统一格式字符串或 time.Time（调用方用 time.Time 构造区间）。
+	// 时间列只接受 **Unix 秒（整数）**—— 时间列本身是 int64, 拿字符串/time.Time 去比
+	// 会变成"字符串 vs 整数"（SQLite 里 TEXT 永远大于 INTEGER）, 静默给出错的结果。
 	Validate func(v any) error
 }
 
@@ -72,10 +72,14 @@ func validateIDValue(v any) error {
 	return nil
 }
 
+// validateTimeValue 时间列的查询值: 只收 Unix 秒（整数）。
+//
+// 为什么不能收 time.Time/字符串: 时间列在库里是 int64, 绑一个字符串进去比较会变成
+// "TEXT vs INTEGER" —— SQLite 的规则是 TEXT > INTEGER 恒真, 于是 `updated_at > '2026-…'`
+// 会把每一行都算成命中（或一行都不中）, **不报错**。要传 time.Time 就先 `.Unix()`。
 func validateTimeValue(v any) error {
-	switch v.(type) {
-	case time.Time, string:
+	if _, ok := UnixSeconds(v); ok {
 		return nil
 	}
-	return fmt.Errorf("expects time or string")
+	return fmt.Errorf("expects unix seconds (integer), got %T(%v) —— time.Time 请先 .Unix()", v, v)
 }

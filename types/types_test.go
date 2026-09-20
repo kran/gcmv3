@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"testing"
-	"time"
 )
 
 // 合法完整定义: 文章↔专家双向引用、相关对称、分类树传递、归属、关系节点。
@@ -180,22 +179,31 @@ func TestValidateFields(t *testing.T) {
 
 // ── 站点扩展: RegisterKind ─────────────────────────
 
-// dateKind 站点自定义 kind 示例: RFC3339 日期字符串。
+// dateKind 站点自定义 kind 示例: **只有日期**（YYYYMMDD 整数）—— 内置的 timestamp 是
+// 时间点（Unix 秒）, 这个例子说明"站点可以自己定义一种值形态 + 复用内置控件"。
 type dateKind struct{}
 
 func (dateKind) Name() string { return "date" }
 func (dateKind) Validate(_ FieldDef, v any) error {
-	s, ok := v.(string)
+	seconds, ok := UnixSeconds(v)
 	if !ok {
-		return fmt.Errorf("expects RFC3339 string, got %T", v)
+		return fmt.Errorf("expects YYYYMMDD integer, got %T", v)
 	}
-	if _, err := time.Parse(time.RFC3339, s); err != nil {
-		return fmt.Errorf("invalid RFC3339 date %q", s)
+	if seconds < 19000101 || seconds > 29991231 {
+		return fmt.Errorf("invalid date %d (expects YYYYMMDD)", seconds)
+	}
+	month := seconds / 100 % 100
+	day := seconds % 100
+	if month < 1 || month > 12 || day < 1 || day > 31 {
+		return fmt.Errorf("invalid date %d (expects YYYYMMDD)", seconds)
 	}
 	return nil
 }
-func (dateKind) IsEmpty(v any) bool { s, ok := v.(string); return !ok || s == "" }
-func (dateKind) Class() Class       { return ClassField }
+func (dateKind) IsEmpty(v any) bool {
+	seconds, ok := UnixSeconds(v)
+	return !ok || seconds == 0
+}
+func (dateKind) Class() Class { return ClassField }
 
 // 自定义 kind 复用内置渲染器（datetime）—— 前端零代码。
 func (dateKind) QueryOps() QueryOps {
@@ -221,11 +229,13 @@ func TestRegisterKind(t *testing.T) {
 	if !operations.Equal || !operations.Ordered || !operations.Sortable || operations.Text {
 		t.Fatalf("custom date query operations = %#v", operations)
 	}
-	if err := ts.ValidateValue("employment", f, "2024-01-15T00:00:00Z"); err != nil {
+	if err := ts.ValidateValue("employment", f, int64(20240115)); err != nil {
 		t.Fatalf("valid date: %v", err)
 	}
-	if err := ts.ValidateValue("employment", f, "not-a-date"); err == nil {
-		t.Fatal("invalid date must fail")
+	for _, bad := range []any{"2024-01-15", int64(20241301), int64(20240132), 0} {
+		if err := ts.ValidateValue("employment", f, bad); err == nil {
+			t.Fatalf("%#v 应当被拒（只收 YYYYMMDD 整数）", bad)
+		}
 	}
 	// required 检查走自定义 IsEmpty
 	if err := ts.ValidateFields("employment", map[string]any{}); err == nil ||

@@ -16,34 +16,52 @@ types:
 	td, _ := ts.Type("event")
 	startAt := td.Fields[1]
 
-	// 统一格式通过（TimeFormat：UTC + 秒精度 + Z）。
-	if err := ts.ValidateValue("event", startAt, "2026-09-14T23:06:41Z"); err != nil {
-		t.Fatalf("canonical timestamp should pass: %v", err)
-	}
-	// 数字是旧表示（Unix 秒）：拒绝，不给"两种写法并存"留口子。
-	for _, bad := range []any{
-		1700000000, float64(1700000000), "1700000000",
-		"2026-09-15 07:06:57",       // 裸墙钟（无时区）
-		"2026-09-15T07:06:57+08:00", // 带偏移：请调用方先归一化
-		"2026-09-14T23:06:41.615Z",  // 带毫秒：破坏定宽
-		"2026-09-15",                // 纯日期
-		"",                          // 空串（清空请用 null，走 merge 删除）
-		nil,                         // 非字符串
-		"不是时间",                      // 垃圾
+	// 整数秒通过（int/int64 与 JSON 解出来的 float64 都收 —— JSON 里没有 int）。
+	for _, good := range []any{
+		int64(1789000000), 1700000000, float64(1789000000),
 	} {
-		if err := ts.ValidateValue("event", startAt, bad); err == nil {
-			t.Fatalf("%#v 应当被拒（timestamp 只收统一格式字符串）", bad)
+		if err := ts.ValidateValue("event", startAt, good); err != nil {
+			t.Fatalf("%#v 应当通过（整数秒）: %v", good, err)
 		}
 	}
-	// required 检查用的空判断：非字符串/空串算空，非法字符串不算空（由 Validate 报错）。
-	if !ts.isEmpty(KindTimestamp, nil) || !ts.isEmpty(KindTimestamp, "") {
-		t.Fatal("nil 与空串应当算空")
+	// 其余一律拒: 字符串（旧表示）、带小数、毫秒/微秒/纳秒、非正数、垃圾。
+	for _, bad := range []any{
+		"2026-09-14T23:06:41Z", // v2 的 ISO 表示 —— 端口时最容易漏掉的那种
+		"1789000000",
+		"",
+		1789000000.5,               // 不是整数秒
+		int64(1789000000000),       // 毫秒（JS 的 Date.now()）
+		int64(1789000000000000),    // 微秒
+		int64(1789000000000000000), // 纳秒
+		0, -1,                      // 0/负数不是时间点
+		nil, true, []int{1}, // 其它类型
+	} {
+		if err := ts.ValidateValue("event", startAt, bad); err == nil {
+			t.Fatalf("%#v 应当被拒（timestamp 只收整数秒）", bad)
+		}
 	}
-	if ts.isEmpty(KindTimestamp, "不是时间") {
-		t.Fatal("非法字符串不该算空（Validate 会报错）")
+	// 毫秒的报错要**点出毫秒** —— 这是唯一的高频单位错。
+	err := ts.ValidateValue("event", startAt, int64(1789000000000))
+	if err == nil || !contains(err.Error(), "毫秒") {
+		t.Fatalf("毫秒的报错该说清单位: %v", err)
 	}
-	// Class 是字段
+	// required 检查用的空判断: 取不到整数或为 0 都算空。
+	if !ts.isEmpty(KindTimestamp, nil) || !ts.isEmpty(KindTimestamp, 0) {
+		t.Fatal("nil 与 0 应当算空")
+	}
+	if ts.isEmpty(KindTimestamp, 1789000000) {
+		t.Fatal("正常值不该算空")
+	}
 	if k, _ := ts.Kind(KindTimestamp); k.Class() != ClassField {
 		t.Fatalf("timestamp should be ClassField")
 	}
+}
+
+func contains(s, sub string) bool {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

@@ -225,11 +225,12 @@ function checkTimestampWidget() {
     const src = read(path.join(ADMIN_DIR, 'widgets/timestamp.vue'))
     const problems = []
     if (/value-format\s*=\s*"x"/.test(src)) problems.push('日期选择器又用毫秒时间戳了（value-format="x"）')
-    if (!/toCanonical\s*\(/.test(src)) problems.push('缺 toCanonical（提交前归一化成 …Z）')
+    if (!/toUnix\s*\(/.test(src)) problems.push('缺 toUnix（提交前换算成 Unix 秒）')
     if (!/toDate\s*\(/.test(src)) problems.push('缺 toDate（显示时按本地时间还原）')
     if (!/Widgets\.localTime/.test(src)) problems.push('列表单元没有按本地时间显示（Widgets.localTime）')
+    if (!/\*\s*1000/.test(src)) problems.push('缺 ×1000（JS 的 Date 是毫秒, 时间字段是秒）')
     for (const msg of problems) console.log('  FAIL ' + msg)
-    if (!problems.length) console.log('  ok   timestamp 控件提交统一格式字符串')
+    if (!problems.length) console.log('  ok   timestamp 控件提交 Unix 秒（显示按本地时间）')
     return problems.length
 }
 
@@ -738,7 +739,7 @@ async function checkRender() {
     // 期望值：每行 [modelValue, 应该看到的内容注解]（文本片段或图片数）
     const samples = {
         text: '标题', textarea: '第一行\n第二行', address: 'about-us', richtext: '<p>正文</p>',
-        number: 3, bool: true, select: 'draft', timestamp: '2026-07-18T09:30:00Z',
+        number: 3, bool: true, select: 'draft', timestamp: 1784367000, // 2026-07-18T09:30:00Z（Unix 秒）
         'upload-image': '/uploads/a.png', 'upload-file': '/uploads/a.mp4',
         gallery: ['/uploads/a.png', '/uploads/b.png'], ref: 7, refs: [7, 8],
     }
@@ -860,19 +861,22 @@ async function checkRender() {
         picker.props['onUpdate:modelValue'](null)   // 选择器把解析不了的值归一成空
         return { emitted: emitted, texts: walk(host).map(n => n.text || '').join('') }
     }
-    const legacy = await timestampEmit(1790179200)          // 纪元秒（JSON 数字）
-    if (legacy.emitted !== 'none') {
-        fail('老格式（纪元数字）被控件回写成 ' + JSON.stringify(legacy.emitted) + ' —— 静默清空数据')
-    } else if (legacy.texts.indexOf('旧格式') < 0) {
-        fail('老格式的值没有提示出来（用户不知道库里是旧格式）: ' + JSON.stringify(legacy.texts))
-    } else {
-        pass('老格式时间值: 不回写 + 有提示')
+    // v2 的 ISO 字符串（旧库）与毫秒值: 选择器读不出来 ⇒ 不许回写（否则静默清数据）+ 要提示
+    for (const bad of ['2026-01-02T03:04:05Z', 1790179200000]) {
+        const legacy = await timestampEmit(bad)
+        if (legacy.emitted !== 'none') {
+            fail(bad + ' 被控件回写成 ' + JSON.stringify(legacy.emitted) + ' —— 静默清空数据')
+        } else if (legacy.texts.indexOf('不是整数秒') < 0) {
+            fail(bad + ' 没有提示出来（用户不知道值不是整数秒）: ' + JSON.stringify(legacy.texts))
+        } else {
+            pass('非整数秒的值（' + bad + '）: 不回写 + 有提示')
+        }
     }
-    const clearing = await timestampEmit('2026-01-02T03:04:05Z')
+    const clearing = await timestampEmit(1784367000)   // 正常值（Unix 秒）
     if (clearing.emitted !== null) {
         fail('清空一个正常的时间值必须能回写 null（否则用户没法清空）: ' + JSON.stringify(clearing.emitted))
     } else {
-        pass('正常时间值可以清空（回写 null）')
+        pass('正常时间值（Unix 秒）可以清空（回写 null）')
     }
     // ⑬ array 是"结构"（没有组件文件），由 FieldRenderer 自己递归渲染：条目 + 上移/下移/
     //    删除 + 「+ 添加一项」必须都在，子字段（object）也要递归出来。
