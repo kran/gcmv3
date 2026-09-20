@@ -106,6 +106,19 @@ export default {
                 .map(function (f) { return f.name })
                 .filter(function (name) { return editable.indexOf(name) < 0 })
         },
+        // isAuthType 这个类型能不能登录（凭据面板只对能登录的类型有意义）。
+        //
+        // 必须是 computed（不是 methods）: 模板要的是**值**, 放 methods 里是函数对象,
+        // `v-if="... && isAuthType"` 永远为真 —— 守卫就白写了（真实踩过, 那个 bug
+        // 让"不能登录的类型"照样去问凭据端点, 于是弹 400）。来源同 permission.vue:
+        // /admin/types 的 capabilities.authentication。
+        isAuthType() {
+            // 类型取自**正在编辑的这个节点**（或新建时的 typeName）, 不读 this.def ——
+            // def 可能是上一个节点的值（先开员工再开 signup）⇒ 判定串台。
+            var type = (this.node && this.node.type) || this.typeName
+            var def = this.defs && this.defs[type]
+            return !!(def && def.capabilities && def.capabilities.authentication)
+        },
         // 编辑时一个字段都写不了（没有写规则, 或规则把字段全裁了）
         nothingWritable() {
             if (!this.isEdit || !this.detail) return false
@@ -206,12 +219,6 @@ export default {
                 }
             }
             this.initial = this.formSnapshot()
-        },
-        // isAuthType 这个类型能不能登录（凭据面板只对能登录的类型有意义）。
-        // 来源同 permission.vue: /admin/types 的 capabilities.authentication。
-        isAuthType() {
-            var def = this.def
-            return !!(def && def.capabilities && def.capabilities.authentication)
         },
         // loadAuth 拉凭据 + 判身份（owner 才渲染那块）。失败静默不显示: 这是附加面板,
         // 不该因为它把人挡在编辑之外（服务端仍是权威）。

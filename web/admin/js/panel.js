@@ -70,7 +70,10 @@ window.Panel = (function () {
         if (window.ElementPlus) window.ElementPlus.ElMessage.error(msg)
     }
 
-    async function request(method, url, params) {
+    // opts.quiet: 失败**不弹全局提示**（可选面板用 —— 它失败了自己隐藏就好,
+    // 弹一句"类型不能登录"出来只会让人以为出了故障）。
+    async function request(method, url, params, opts) {
+        var quiet = Boolean(opts && opts.quiet)
         var fullUrl = url
         var opts = { method: method, headers: {}, credentials: 'same-origin' }
 
@@ -98,12 +101,12 @@ window.Panel = (function () {
             if (!resp.ok) {
                 err = new Error(body.error || ('HTTP ' + resp.status))
                 err.status = resp.status
-                if (resp.status !== 401) _toast(err.message)
+                if (resp.status !== 401 && !quiet) _toast(err.message)
             }
         } catch (e) {
             if (!err) {
                 err = new Error('network error')
-                _toast('网络请求失败')
+                if (!quiet) _toast('网络请求失败')
             }
         }
 
@@ -114,7 +117,7 @@ window.Panel = (function () {
         return body
     }
 
-    function get(url, params) { return request('GET', url, params) }
+    function get(url, params, opts) { return request('GET', url, params, opts) }
     function post(url, body) { return request('POST', url, body) }
     function put(url, body) { return request('PUT', url, body) }
     function del(url) { return request('DELETE', url) }

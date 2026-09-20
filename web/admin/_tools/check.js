@@ -569,23 +569,61 @@ async function checkRender() {
                 }
             }
         }
-        // 逻辑: 非 auth 类型连问都不该问（问了就是 400 + 全局错误提示）
         const opts = NodeEditDialog.default || NodeEditDialog
+        // isAuthType 必须是 **computed**: 模板要值, 放 methods 里是函数对象 ⇒
+        // v-if 永远为真、loadAuth 的早退永远不生效（真实踩过 —— 守卫白写, 照样弹 400）。
+        // 上一版闸门读的是 opts.computed.isAuthType, 而它当时在 methods 里 ⇒ undefined
+        // ⇒ 假对象"早退"了 ⇒ 断言静默通过（**假绿**, 比没有闸门更坏）。
+        if (typeof opts.computed.isAuthType !== 'function') {
+            fail('isAuthType 必须是 computed（在 methods 里就是个函数对象 ⇒ 守卫永远为真）')
+        }
+        if (typeof opts.methods.isAuthType === 'function') {
+            fail('isAuthType 出现在 methods 里 —— 模板拿到的会是函数对象, 不是布尔值')
+        }
+
+        // 判据不许依赖 this.def: 它由 loadEdit/loadCreate 赋值 —— 先开过一个能登录的
+        // 节点再开 signup 时可能还是上一个的值 ⇒ 判断成"能登录"就去问了端点（真实踩过）。
+        const isAuthTypeRaw = (authSrc.match(/isAuthType\(\) \{[\s\S]{0,400}?\n        \},/) || [''])[0]
+        // 去掉注释再判（注释里正当地提到 this.def 不该算）
+        const isAuthTypeSrc = isAuthTypeRaw.replace(/\/\/[^\n]*/g, '')
+        if (!/this\.defs/.test(isAuthTypeSrc)) {
+            fail('isAuthType 该按 this.defs[类型] 判断（类型取自正在编辑的节点）')
+        }
+        if (/this\.def\b/.test(isAuthTypeSrc)) {
+            fail('isAuthType 读了 this.def（可能是上一个节点的 —— 会去问不能登录的类型）')
+        }
+        // 列表请求要静默: 拿不到凭据就是"面板不显示", 不该弹全局错误提示
+        const apiSrc2 = read(path.join(ADMIN_DIR, 'js/api.js'))
+        const authMethodsSrc = (apiSrc2.match(/authMethods:[\s\S]{0,220}?\},/) || [''])[0]
+        if (!/quiet:\s*true/.test(authMethodsSrc)) {
+            fail('authMethods 该走静默请求（否则非 owner/非 auth 类型会弹全局错误）')
+        }
+
+        // 逻辑: 非 auth 类型连问都不该问（问了就是 400 + 全局错误提示）
         const savedApi = sandbox.$api
         let meCalls = 0
         sandbox.$api = Object.assign({}, savedApi, {
             me: async () => { meCalls++; return { actor: { roles: ['owner'] } } },
             authMethods: async () => ({ methods: [], password_methods: ['email'] }),
         })
-        const fakeThis = (def) => ({
-            def: def, isOwner: false, authMethods: [], passwordMethods: [],
+        const fakeThis = (def, defs) => ({
+            def: def, defs: defs, isOwner: false, authMethods: [], passwordMethods: [],
             authForm: { method: '', identifier: '', secret: '' },
             node: { id: 7, type: 'signup' }, typeName: 'signup',
             loadAuth: opts.methods.loadAuth,
-            isAuthType: opts.computed.isAuthType,
+            // 假对象也要给**值**: computed 在真组件里由 Vue 求值, 这里调真逻辑算一遍
+            // （上一版把函数本身当值 ⇒ 永远真 ⇒ 假绿）
+            get isAuthType() { return Boolean(opts.computed.isAuthType.call(this)) },
         })
-        const nonAuth = fakeThis({ capabilities: {} })
+        const nonAuth = fakeThis({ capabilities: {} }, {})
         opts.methods.loadAuth.call(nonAuth)
+        await new Promise((r) => setTimeout(r, 0))
+        // 真实场景: 先开过一个能登录的节点（def 是它的）, 再开 signup —— defs 里
+        // signup 没有 authentication ⇒ 仍然一次都不许问
+        const stale = fakeThis({ capabilities: { authentication: { roles: ['秘书处'] } } },
+            { signup: { capabilities: {} } })
+        stale.node = { id: 9, type: 'signup' }
+        opts.methods.loadAuth.call(stale)
         await new Promise((r) => setTimeout(r, 0))
         sandbox.$api = savedApi
         if (meCalls !== 0) {

@@ -27,6 +27,16 @@ const CASES = [
         'this.detail = full', 'this.detail = null'],
     // 注入**旧的 fail-open 写法**: 缺 editable 时当成"全都能写"
     // 非 auth 类型的抽屉不该去问凭据端点（问了就是 400 + 全局错误提示）
+    // 判据依赖 this.def ⇒ 先开过一个能登录的节点再开 signup 就会去问端点
+    // isAuthType 掉进 methods ⇒ 模板拿到函数对象, 守卫永远为真（真实踩过的那个 bug）
+    ['isAuthType 必须在 computed 闸门', 'render', 'pages/NodeEditDialog.vue',
+        'isAuthType() {', 'isAuthTypeMovedOut() {'],
+    ['isAuthType 依赖 def 闸门', 'render', 'pages/NodeEditDialog.vue',
+        'var type = (this.node && this.node.type) || this.typeName',
+        'var type = (this.def && this.def.name) || this.typeName'],
+    // 列表请求不静默 ⇒ 非 owner/非 auth 类型会弹全局错误提示
+    ['凭据列表静默闸门', 'render', 'js/api.js',
+        '{ quiet: true }', '{ quiet: false }'],
     ['凭据面板缺 isAuthType 守卫闸门', 'render', 'pages/NodeEditDialog.vue',
         'v-if="isOwner && isAuthType && isEdit && node && node.id"',
         'v-if="isOwner && isEdit && node && node.id"'],

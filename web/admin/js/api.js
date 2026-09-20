@@ -32,7 +32,11 @@ window.$api = {
     tree:       function (type, sort) { return Panel.get('/admin/tree/' + type, sort ? { sort: sort } : {}) },
 
     // 登录凭据（**只有 owner** —— 服务端独立校验, 这里只是面板）
-    authMethods: function (type, id) { return Panel.get('/admin/auth/' + type + '/' + id) },
+    // 静默: 拿不到凭据（非 owner / 非 auth 类型 / 未登录）就是"面板不显示",
+    // 不该弹全局错误提示
+    authMethods: function (type, id) {
+        return Panel.get('/admin/auth/' + type + '/' + id, null, { quiet: true })
+    },
     authSet:     function (type, id, body) { return Panel.post('/admin/auth/' + type + '/' + id, body) },
     authRemove:  function (type, id, method) { return Panel.del('/admin/auth/' + type + '/' + id + '/' + method) },
 
