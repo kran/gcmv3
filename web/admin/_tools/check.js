@@ -1057,6 +1057,22 @@ async function checkRender() {
         pass('登录渠道下拉: ' + realmLabels.join(' / '))
     }
 
+    // ⑯ 引用标签（**真实实现 + 服务端真实形状**）: expand 里是完整节点 ⇒ 必须显示名字。
+    //    真实踩过: 引用列显示成 "#61 #61"（refLabel 兜底 `#id` + refOption 又缀了 ` #61`）。
+    //    这条放在最后: 它加载真实的 js/api.js（会覆盖前面的 $api 桩）。
+    vm.runInContext(read(path.join(ADMIN_DIR, 'js/api.js')), sandbox, { filename: 'api.js' })
+    const realLabel = sandbox.$api.refLabel(
+        { id: 61, type: 'category',
+          fields: { address: 'about', name: '我会简介', position: 4 } },
+        { admin: { columns: ['name', 'address'] }, fields: [{ name: 'name', kind: 'text' }] })
+    if (realLabel !== '我会简介') {
+        fail('引用标签该取 admin.columns 里的 name, 实际 ' + JSON.stringify(realLabel) +
+            '（引用列只显示 #id 就是这个兜底被触发了）')
+    } else {
+        pass('引用标签: ' + realLabel)
+    }
+
+
     return failed
 }
 

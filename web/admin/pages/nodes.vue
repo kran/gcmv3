@@ -49,9 +49,9 @@
       <!-- 树视图（admin.view: tree 的类型）: 服务端装好的整棵树, 不分页 -->
       <el-table v-if="treeMode" :data="treeNodes" v-loading="loading" row-key="id"
                 :tree-props="{ children: 'children' }" default-expand-all>
-        <el-table-column label="标题" min-width="260" show-overflow-tooltip>
+        <el-table-column label="ID" width="80">
           <template #default="{ row: r }">
-            <a class="node-title-link" @click.prevent="openEdit(r)">{{ titleOf(r) }}</a>
+            <a class="node-title-link" @click.prevent="openEdit(r)">{{ r.id }}</a>
           </template>
         </el-table-column>
         <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>
@@ -71,9 +71,12 @@
       </el-table>
 
       <el-table v-else :data="rows" v-loading="loading">
-        <el-table-column prop="id" label="ID" width="70" />
-        <el-table-column label="标题" min-width="260" show-overflow-tooltip>
-          <template #default="{ row: r }"><a class="node-title-link" @click.prevent="openEdit(r)">{{ titleOf(r) }}</a></template>
+        <!-- ID 是可点的编辑入口（v2 那列"标题"是 display 系统列的幽灵, 已删:
+             显示什么完全由 types 的 admin.columns 决定） -->
+        <el-table-column label="ID" width="80">
+          <template #default="{ row: r }">
+            <a class="node-title-link" @click.prevent="openEdit(r)">{{ r.id }}</a>
+          </template>
         </el-table-column>
         <el-table-column v-for="c in adminColumns" :key="c" :label="fieldLabel(c)" min-width="130" show-overflow-tooltip>
           <template #default="{ row: r }">
@@ -101,7 +104,7 @@
       <!-- 页面级新建（行编辑走 NodeOps） -->
       <node-edit-dialog v-model:visible="createVisible" :type-name="query.type" :defs="typeDefs"
                         @changed="refresh" />
-      <!-- 标题链接编辑（列表标题点击 → 编辑对话框） -->
+      <!-- 行内 ID 链接打开的编辑对话框 -->
       <node-edit-dialog v-model:visible="editVisible" :node="editNode" :type-name="query.type"
                         :is-edit="true" :defs="typeDefs" @changed="refresh" />
       <!-- 点引用链接：目标多半是别的类型，所以单独一个抽屉（类型跟着目标走） -->
@@ -176,7 +179,7 @@ export default {
             if (at > 0) groups.unshift(groups.splice(at, 1)[0])
             return groups
         },
-        // 标题链接 → 编辑对话框
+        // ID 链接 → 编辑对话框
         openEdit(node) {
             this.editNode = node
             this.editVisible = true
@@ -336,7 +339,8 @@ export default {
         // 时间列是 **Unix 秒**（整数）—— 显示按设备本地时间（v2 是 ISO 字符串,
         // 端口时这里漏了: `s.replace` 在数字上直接抛 TypeError）。
         fmt(s) { return s ? Widgets.localTime(s) : '' },
-        // 列表标题: 统一走 $api.refLabel（admin.columns 首个非空 → 字段序 → expand 合成）
+        // 引用筛选选项/回显的标签: 统一走 $api.refLabel
+        // （admin.columns 首个非空 → 字段序 → expand 合成 → #id 兜底）
         titleOf(r) {
             return window.$api.refLabel(r, this.typeDefs[r.type] || null)
         },

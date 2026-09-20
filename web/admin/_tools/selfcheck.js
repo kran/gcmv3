@@ -23,6 +23,8 @@ const CASES = [
     ['setup 返回未定义的名字', 'sfc', 'pages/App.vue', 'var loginRealms = ref([])', 'var loginRealmsRenamed = ref([])'],
     ['App.vue 挂载闸门', 'render', 'pages/App.vue', 'Panel.onError(', 'Panel.onErrorX('],
     ['登录渠道下拉闸门', 'render', 'pages/App.vue', ':label="r.name" :value="r.name"', ':label="r.realm" :value="r.realm"'],
+    ['引用标签闸门（兜底成 #id）', 'render', 'js/api.js',
+        "const cols = ((def || {}).admin || {}).columns || []", "return '#' + n.id"],
     ['列表时间列闸门（ISO 假设）', 'render', 'pages/nodes.vue', 'fmt(s) { return s ? Widgets.localTime(s) : \'\' }', "fmt(s) { return s ? s.replace('T', ' ').slice(0, 16) : '' }"],
     ['静态资源闸门', 'sfc', 'index.html', '<script src="js/widgets.js"></script>', '<script src="js/nope.js"></script>'],
     ['破坏性措辞闸门', 'sfc', 'pages/NodeOps.vue', '永久删除', '删除'],
