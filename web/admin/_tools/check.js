@@ -188,6 +188,27 @@ function checkWidgetStyles() {
         if (!/object-fit:\s*cover/.test(thumb)) problems.push('.w-thumb 缺 object-fit: cover（会变形）')
     }
 
+    // ② 缩略图必须**让图片服务先缩再传**: 30px 的格子下整张原图, 列表一页就是几十 MB。
+    //    参数口径与 plugin/imgproc 一致（m_fill 必须给 w 和 h）, 且尺寸要和 .w-thumb 一致 ——
+    //    样式改了参数没改是个很自然的漂移（两处都在这个仓库里, 这里替人记住）。
+    // ③ 显示名检索的字面量必须走 JSON.stringify（与 so 的 strconv.Unquote 同一套转义）。
+    //    自己拼引号: 用户输入含 " 或 \ 时条件就拼坏了（还可能拼出别的条件）。
+    const nodesSource = read(path.join(ADMIN_DIR, 'pages/nodes.vue'))
+    if (nodesSource.includes('(contains $') && !nodesSource.includes('JSON.stringify(term)')) {
+        problems.push('nodes.vue: 显示名检索的字面量必须用 JSON.stringify（自己拼引号会被输入里的 " \\ 拼坏）')
+    }
+
+    const imageWidget = read(path.join(ADMIN_DIR, 'widgets/upload-image.vue'))
+    const process = imageWidget.match(/x-oss-process=image\/resize,w_(\d+),h_(\d+),m_(\w+)/)
+    if (!process) {
+        problems.push('upload-image.vue: 缩略图没有带 x-oss-process 缩放参数（列表会下整张原图）')
+    } else {
+        const cssWidth = (thumb.match(/width:\s*(\d+)px/) || [])[1]
+        if (cssWidth && process[1] !== cssWidth) {
+            problems.push(`upload-image.vue: 缩略图参数 ${process[1]}px 与 .w-thumb 样式 ${cssWidth}px 不一致`)
+        }
+    }
+
     // ④ 组件的 <style> 是**纯 CSS**（没有 less 预处理器）—— // 注释、& 嵌套、
     //    @变量 都会让紧随其后的规则被整段丢掉（页面看着像"样式没生效"）。
     for (const [f, css] of Object.entries(styles)) {
@@ -1009,7 +1030,7 @@ async function checkRender() {
         text: { text: '标题' }, textarea: { text: '第一行' }, address: { text: 'about-us' },
         richtext: { text: '正文' }, number: { text: '3' }, bool: { text: '✓' },
         select: { text: 'draft' }, timestamp: { text: '2026' },
-        'upload-image': { imgs: 1, src: '/uploads/a.png' }, 'upload-file': { text: 'a.mp4' },
+        'upload-image': { imgs: 1, src: '/uploads/a.png?x-oss-process=image/resize,w_30,h_30,m_fill' }, 'upload-file': { text: 'a.mp4' },
         // 引用单元格必须"显示名 + #id"：少了 #id 同名节点就分不出来（曾经把标签简化掉过一次）
         gallery: { imgs: 2 }, ref: { text: '引用目标', link: true, hash: '#1' },
         refs: { text: '引用目标', link: true, hash: '#1' },

@@ -24,6 +24,13 @@
     <div class="nodes-list">
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
         <span style="font-size:16px;">{{ query.type || '未选择类型' }}</span>
+        <!-- 显示名检索：针对类型的 admin.display 字段（内核的 contains ⇒ LIKE '%…%'）。
+             只在类型声明了 display 时才出现 —— 没有它就没法拼条件（宁可不出这个框, 也别静默搜不到）。 -->
+        <el-input v-if="displayField" v-model="query.search" size="small" clearable
+                  :placeholder="'搜索' + displayLabel" style="width:200px;"
+                  @keyup.enter="applyFilters" @clear="applyFilters" @input="onSearchInput">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
         <!-- 引用筛选：类型的每个 ref 字段一项, 与编辑表单同款的可搜索选择 -->
         <el-popover v-for="f in filters" :key="f.field" trigger="click" placement="bottom-start"
                     :show-timeout="0" :hide-timeout="0" :width="280" style="margin-left:8px;"
@@ -137,7 +144,8 @@ export default {
             treeMode: false,     // admin.view === 'tree' ⇒ 用树形表（全量不分页）
             treeNodes: [],
             filters: [],       // 引用筛选: [{field, to, label, options, active, activeLabel}]
-            query: { type: '', filter: '', page: 1, size: 25 },
+            query: { type: '', filter: '', search: '', page: 1, size: 25 },
+            searchTimer: null,   // 显示名检索的输入防抖
             createVisible: false,
             editVisible: false,
             refEdit: { visible: false, node: null, typeName: '' },   // 点引用链接打开的节点（类型可能不同）
@@ -152,6 +160,17 @@ export default {
         adminColumns() {
             const def = this.typeDefs[this.query.type] || {}
             return ((def.admin && def.admin.columns) || []).filter(c => !['id', 'updated_at'].includes(c))
+        },
+        // 检索框针对的字段 = 类型的展示字段（admin.display）; 没声明就不显示检索框
+        displayField() {
+            const def = this.typeDefs[this.query.type] || {}
+            return (def.admin && def.admin.display) || ''
+        },
+        displayLabel() {
+            const def = this.typeDefs[this.query.type] || {}
+            const fields = def.fields || []
+            const found = fields.filter(f => f.name === this.displayField)[0]
+            return (found && found.label) || this.displayField || '名称'
         },
     },
     async mounted() { await this.loadTypes() },
@@ -235,6 +254,7 @@ export default {
             this.query.page = 1
             // 类型切换清残留: 筛选表达式是按旧类型的字段填的（对不上新类型, fail-loud 报错）
             this.query.filter = ''
+            this.query.search = ''
             this.setupFilters(this.typeDefs[t] || {})
             const def = this.typeDefs[t] || {}
             this.treeMode = !!(def.admin && def.admin.view === 'tree')
@@ -282,6 +302,11 @@ export default {
             f._ids = id ? [id] : null
             this.applyFilters()
         },
+        // 显示名检索的输入防抖: 打字停 300ms 才查（Enter 与清空立即查）
+        onSearchInput() {
+            if (this.searchTimer) clearTimeout(this.searchTimer)
+            this.searchTimer = setTimeout(this.applyFilters, 300)
+        },
         clearFilter(ft) {
             ft.active = 0
             ft.activeLabel = ''
@@ -297,13 +322,20 @@ export default {
             const ref = this.$refs['fp-' + ft.field]
             if (ref && ref[0]) ref[0].hide()
         },
-        // 多字段 AND 组合: (and (in ->f1 [ids]) (in ->f2 [ids]))
+        // 多字段 AND 组合: 引用筛选 + 显示名检索
+        //   (and (in ->category [1 2]) (contains $name "新能源"))
+        // 字面量用 JSON.stringify: so 的解析走 strconv.Unquote（同一套转义）⇒ 引号/反斜杠安全;
+        // 内核的 contains 自己参数化 + escapeLike ⇒ 用户输入的 % _ 不会变成通配。
         combineFilters() {
             const parts = []
             for (const f of this.filters) {
                 if (f._ids && f._ids.length) {
                     parts.push('(in ->' + f.field + ' [' + f._ids.join(' ') + '])')
                 }
+            }
+            const term = String(this.query.search || '').trim()
+            if (term && this.displayField) {
+                parts.push('(contains $' + this.displayField + ' ' + JSON.stringify(term) + ')')
             }
             if (parts.length === 0) return ''
             if (parts.length === 1) return parts[0]
