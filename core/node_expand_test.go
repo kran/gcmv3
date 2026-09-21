@@ -297,12 +297,10 @@ func TestExpandEdgeLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ids := make([]any, 0, maxExpandEdges+1)
-	for i := 0; i <= maxExpandEdges; i++ {
-		ids = append(ids, cat)
-	}
+	// 单节点批次的上限 = 1 * maxExpandEdgesPerNode（远小于整批封顶）, 造 limit+1 条边
+	limit := maxExpandEdgesPerNode
 	// 直接写边（绕过应用层去重 —— 这是"库里已经有脏数据"的场景）
-	for i := 0; i <= maxExpandEdges; i++ {
+	for i := 0; i <= limit; i++ {
 		target, err := gcm.CreateNode(nil, &Node{Type: "article", Fields: Fields{"title": "t"}})
 		if err != nil {
 			t.Fatal(err)
@@ -325,5 +323,49 @@ func TestExpandEdgeLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeds") {
 		t.Fatalf("错误要说清是超限: %v", err)
+	}
+}
+
+// TestExpandEdgeLimitScales 上限随批次放大: 单节点会炸的边数, 摊到两个节点上就该过。
+func TestExpandEdgeLimitScales(t *testing.T) {
+	gcm := openFixture(t)
+	cats := make([]*Node, 2)
+	for i := range cats {
+		id, err := gcm.CreateNode(nil, &Node{Type: "category", Fields: Fields{"name": "分类"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cats[i], err = gcm.GetNode(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 每个分类挂 (perNode/2 + 1) 条入边: 单节点看是超它自己的"份额"的一半多,
+	// 但两个节点的批次上限是 2*perNode, 总数没超 ⇒ 应当成功。
+	perCat := maxExpandEdgesPerNode/2 + 1
+	for _, cat := range cats {
+		for range perCat {
+			target, err := gcm.CreateNode(nil, &Node{Type: "article", Fields: Fields{"title": "t"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = gcm.db.Insert("edges", map[string]any{
+				"from_node": target, "field": "categories", "to_node": cat.ID,
+				"sort": 0, "created_at": nowValue(),
+			}).Exec()
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	_, err := gcm.ExpandNodes(cats, "<-article.categories")
+	if err != nil {
+		t.Fatalf("批次上限该随节点数放大: %v", err)
+	}
+	for _, cat := range cats {
+		got, _ := cat.Expand["<-article.categories"].([]*Node)
+		if len(got) != perCat {
+			t.Fatalf("node %d: got %d targets, want %d", cat.ID, len(got), perCat)
+		}
 	}
 }
