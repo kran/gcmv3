@@ -20,6 +20,9 @@ const TMP = path.join(os.tmpdir(), 'admin-selfcheck')
 
 // [说明, 模式, 文件, 原文, 改成]
 const CASES = [
+    // 树视图里还留着检索框（树一次装整棵 ⇒ 检索不参与 ⇒ 框是摆设）
+    ['树视图隐藏检索框闸门', 'sfc', 'pages/nodes.vue',
+        'v-if="displayField && !treeMode"', 'v-if="displayField"'],
     // 检索字面量自己拼引号 ⇒ 输入含 " 或 \ 就把条件拼坏
     ['检索字面量转义闸门', 'sfc', 'pages/nodes.vue',
         'JSON.stringify(term)', 'term'],

@@ -25,8 +25,10 @@
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
         <span style="font-size:16px;">{{ query.type || '未选择类型' }}</span>
         <!-- 显示名检索：针对类型的 admin.display 字段（内核的 contains ⇒ LIKE '%…%'）。
-             只在类型声明了 display 时才出现 —— 没有它就没法拼条件（宁可不出这个框, 也别静默搜不到）。 -->
-        <el-input v-if="displayField" v-model="query.search" size="small" clearable
+             只在**列表视图**且类型声明了 display 时出现:
+               · 树视图一次装整棵、不分页 ⇒ 检索条件不参与 ⇒ 给了这个框就是骗人
+               · 没声明 display 就拼不出条件（宁可不出这个框, 也别静默搜不到） -->
+        <el-input v-if="displayField && !treeMode" v-model="query.search" size="small" clearable
                   :placeholder="'搜索' + displayLabel" style="width:200px;"
                   @keyup.enter="applyFilters" @clear="applyFilters" @input="onSearchInput">
           <template #prefix><el-icon><Search /></el-icon></template>

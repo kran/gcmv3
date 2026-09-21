@@ -194,6 +194,12 @@ function checkWidgetStyles() {
     // ③ 显示名检索的字面量必须走 JSON.stringify（与 so 的 strconv.Unquote 同一套转义）。
     //    自己拼引号: 用户输入含 " 或 \ 时条件就拼坏了（还可能拼出别的条件）。
     const nodesSource = read(path.join(ADMIN_DIR, 'pages/nodes.vue'))
+    // ④ 检索框在**树视图**里必须隐藏: 树一次装整棵、不分页, 检索条件不参与 ——
+    //    框留在那里就是"看着能搜, 其实没用"（比不改还坏）。
+    if (/v-if="displayField"/.test(nodesSource)) {
+        problems.push('nodes.vue: 检索框少了 !treeMode 守卫（树视图不分页, 检索不参与 ⇒ 框是摆设）')
+    }
+
     if (nodesSource.includes('(contains $') && !nodesSource.includes('JSON.stringify(term)')) {
         problems.push('nodes.vue: 显示名检索的字面量必须用 JSON.stringify（自己拼引号会被输入里的 " \\ 拼坏）')
     }
