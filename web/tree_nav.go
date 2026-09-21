@@ -117,6 +117,18 @@ func (t *Tree) Children(ref any) []*core.Node {
 	return t.children[id]
 }
 
+// Parent 直接父节点（没有/父不可见 ⇒ nil）。
+func (t *Tree) Parent(ref any) *core.Node {
+	if t == nil {
+		return nil
+	}
+	id := t.resolve(ref)
+	if id == 0 {
+		return nil
+	}
+	return t.byID[t.parent[id]]
+}
+
 // Ancestors 祖先链: **根 → …… → 父**（不含自己）—— 面包屑按顺序 range 即可。
 func (t *Tree) Ancestors(ref any) []*core.Node {
 	if t == nil {

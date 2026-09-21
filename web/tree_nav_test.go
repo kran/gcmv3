@@ -78,6 +78,12 @@ func TestTreeResolveByAddress(t *testing.T) {
 	if children := tree.Children("news"); len(children) != 1 || children[0].ID != 2 {
 		t.Fatalf("按地址取子级: %#v", names(children))
 	}
+	if parent := tree.Parent("news-industry"); parent == nil || parent.ID != 1 {
+		t.Fatalf("取父节点: %#v", parent)
+	}
+	if parent := tree.Parent("news"); parent != nil {
+		t.Fatalf("根没有父: %#v", parent)
+	}
 	if ancestors := tree.Ancestors("news-industry"); len(ancestors) != 1 || ancestors[0].ID != 1 {
 		t.Fatalf("按地址取祖先链: %#v", names(ancestors))
 	}
