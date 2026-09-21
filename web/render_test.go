@@ -144,7 +144,7 @@ func TestRenderCustomFuncWithContext(t *testing.T) {
 // ServeNode: ref（id 或地址）→ 读入口 → 级联 → 404。
 func TestRenderServeNode(t *testing.T) {
 	site, render := renderSite(t, map[string]string{
-		"node--article.html": "A:{{ .Node.Fields.title }}|{{ .Path }}",
+		"node--article.html": "A:{{ .Node.Fields.title }}|{{ .Path }}{{ if .Site }}|{{ .Site }}{{ end }}",
 		"node.html":          "N:{{ .Node.Fields.title }}",
 		"404.html":           "没找到: {{ .Path }}",
 	})
@@ -166,6 +166,15 @@ func TestRenderServeNode(t *testing.T) {
 	if got := rec.Body.String(); got != "A:标题|/node/hello" {
 		t.Fatalf("按 id 渲染: %q", got)
 	}
+	// 站点自己的数据钩子: 追加的键会进模板数据（站点数据形状由站点填）
+	ctx, rec = ctxFor(site, func(r *http.Request) { r.URL.Path = "/node/hello" })
+	err = render.ServeNode(ctx, id, func(node *core.Node) map[string]any {
+		return map[string]any{"Site": "立知", "Title": node.Fields.Str("title")}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// 按地址也一样（地址全表唯一 ⇒ 不需要类型）
 	ctx, rec = ctxFor(site, func(r *http.Request) { r.URL.Path = "/node/hello" })
 	if err := render.ServeNode(ctx, "hello"); err != nil {

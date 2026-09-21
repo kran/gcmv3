@@ -143,9 +143,10 @@ func (r *Render) Partial(ctx *CmsCtx, name string, data any) (template.HTML, err
 //	级联:   node--{type}.html → node.html
 //	404:    回 404 状态 + 尽量渲染 404.html（没有就退回纯文本）
 //
-// 模板数据只有 {Node, Path} —— 树/站点配置这类由站点自己的模板函数给（tree/pageNodes …），
-// 所以框架不背站点的数据形状。
-func (r *Render) ServeNode(ctx *CmsCtx, ref any) error {
+// data 是站点造模板数据的钩子（`nil` = 给 {Node, Path}）—— 站点自己的页面结构
+// （lizhiqi 的 PageData 那种)由它填, 框架不背站点的数据形状。
+// 站点也可以返回 nil, 那就用默认的 {Node, Path}。
+func (r *Render) ServeNode(ctx *CmsCtx, ref any, data ...func(*core.Node) map[string]any) error {
 	// 全局解析（不分类型）: 数字当 id, 其余当地址（地址全表唯一）
 	node, err := r.site.engine.GetNode(ref)
 	if err != nil {
@@ -162,8 +163,16 @@ func (r *Render) ServeNode(ctx *CmsCtx, ref any) error {
 	if err != nil || visible == nil {
 		return r.serveNotFound(ctx)
 	}
-	data := map[string]any{"Node": visible, "Path": ctx.R.URL.Path}
-	err = r.Render(ctx, ctx.W, []string{"node--" + visible.Type + ".html", "node.html"}, data)
+	payload := map[string]any{"Node": visible, "Path": ctx.R.URL.Path}
+	for _, build := range data {
+		if build == nil {
+			continue
+		}
+		for key, value := range build(visible) {
+			payload[key] = value
+		}
+	}
+	err = r.Render(ctx, ctx.W, []string{"node--" + visible.Type + ".html", "node.html"}, payload)
 	if err != nil {
 		return err
 	}
