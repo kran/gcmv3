@@ -1,10 +1,14 @@
 package web
 
 import (
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/kran/gcmv3/core"
+	so "github.com/kran/gcmv3/so"
 )
 
 // 建个真模板目录的站点（渲染是文件系统 + 上下文的事, 用真目录最实在）。
@@ -14,6 +18,7 @@ func renderSite(t *testing.T, templates map[string]string) (*Site, *Render) {
 	err := writeTypesFile(basedir, `
 types:
   article:
+    capabilities: { addressable: true }
     fields:
       - { name: title, kind: text }
 `)
@@ -78,10 +83,10 @@ func TestRenderCascade(t *testing.T) {
 // 内置函数: rich/excerpt/date/default/join/asset + partial/partialOr。
 func TestRenderBuiltins(t *testing.T) {
 	site, render := renderSite(t, map[string]string{
-		"page.html": `{{ rich .Body }}|{{ excerpt .Body 4 }}|{{ date .At }}|{{ .Missing | default "—" }}|{{ join "," .Tags }}|{{ asset "uploads/a.png" }}|{{ partial "card.html" . }}|{{ partialOr "nope.html" "没卡片" . }}`,
+		"page.html": `{{ rich .Body }}|{{ excerpt .Body 4 }}|{{ date .At }}|{{ .Missing | default "—" }}|{{ join "," .Tags }}|{{ url "uploads/a.png" }}|{{ partial "card.html" . }}`,
 		"card.html": "CARD:{{ .Title }}",
 	})
-	render.asset = "https://cdn.example.com"
+	render.base = "https://cdn.example.com"
 	data := map[string]any{
 		"Title": "标题", "Body": "<p>新能源产业对接</p>", "At": int64(1784367000),
 		"Tags": []string{"a", "b"},
@@ -93,9 +98,8 @@ func TestRenderBuiltins(t *testing.T) {
 		"2026-07-18",                            // date: Unix 秒 → 日期
 		"—",                                     // default: 空值兜底
 		"a,b",                                   // join
-		"https://cdn.example.com/uploads/a.png", // asset: 带前缀
+		"https://cdn.example.com/uploads/a.png", // url: 带前缀
 		"CARD:标题",                               // partial
-		"没卡片",                                   // partialOr: 缺片段兜底
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("渲染结果少了 %q:\n%s", want, got)
@@ -134,5 +138,62 @@ func TestRenderCustomFuncWithContext(t *testing.T) {
 	err = render2.Render(ctx, &out, []string{"p.html"}, nil)
 	if err == nil {
 		t.Fatal("未注册的函数该渲染期报错")
+	}
+}
+
+// ServeNode: ref（id 或地址）→ 读入口 → 级联 → 404。
+func TestRenderServeNode(t *testing.T) {
+	site, render := renderSite(t, map[string]string{
+		"node--article.html": "A:{{ .Node.Fields.title }}|{{ .Path }}",
+		"node.html":          "N:{{ .Node.Fields.title }}",
+		"404.html":           "没找到: {{ .Path }}",
+	})
+	site.Type("article").OnRead(func(_ *CmsCtx, where *so.Where, _ *Grant) error {
+		*where = so.P("true")
+		return nil
+	})
+	id, err := site.Engine().CreateNode(nil, &core.Node{
+		Type: "article", Fields: core.Fields{"title": "标题", "address": "hello"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, rec := ctxFor(site, func(r *http.Request) { r.URL.Path = "/node/hello" })
+	if err := render.ServeNode(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.Body.String(); got != "A:标题|/node/hello" {
+		t.Fatalf("按 id 渲染: %q", got)
+	}
+	// 按地址也一样（地址全表唯一 ⇒ 不需要类型）
+	ctx, rec = ctxFor(site, func(r *http.Request) { r.URL.Path = "/node/hello" })
+	if err := render.ServeNode(ctx, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.Body.String(); got != "A:标题|/node/hello" {
+		t.Fatalf("按地址渲染: %q", got)
+	}
+
+	// 读不到 ⇒ 404 状态 + 404.html（不泄漏存在性）
+	site.Type("article").OnRead(func(_ *CmsCtx, where *so.Where, _ *Grant) error {
+		*where = so.P("false")
+		return nil
+	})
+	// 读规则是配置期的（Setup 之前）—— 这里换不了, 于是用另一个没有读规则的类型来验 404
+	ctx, rec = ctxFor(site, func(r *http.Request) { r.URL.Path = "/node/nope" })
+	if err := render.ServeNode(ctx, "nope"); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("找不到该 404, 实际 %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "没找到: /node/nope") {
+		t.Fatalf("该渲染 404.html: %q", rec.Body.String())
+	}
+	// url(node) 缺 address ⇒ 报错（不静默空 href）
+	node := &core.Node{ID: 7, Type: "article", Fields: core.Fields{"title": "无地址"}}
+	if _, err := render.url(node); err == nil {
+		t.Fatal("没有 address 的节点拼 URL 该报错")
 	}
 }

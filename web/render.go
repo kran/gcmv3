@@ -1,4 +1,4 @@
-// 服务端渲染（模板）—— 内容站的那套：级联取模板 + 片段 + 函数注册。
+// Package web 服务端渲染（模板）—— 内容站的那套：级联取模板 + 片段 + 函数注册。
 //
 // 为什么在 web 而不是单独包: 模板函数要拿**请求上下文**（CmsCtx）才能走受管读入口,
 // 而那是 web 的东西。精简口径（对照 v2 的 434 行）:
@@ -18,15 +18,20 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/kran/gcmv3/core"
 )
 
 // RenderOptions 渲染引擎配置。
@@ -35,16 +40,17 @@ type RenderOptions struct {
 	Root string
 	// Funcs 站点自定义模板函数（与 Render.Func 等价, 图省事在这里一起给）。
 	Funcs map[string]any
-	// AssetBase 资产前缀（相对路径 /uploads/... 补成 AssetBase+/uploads/... ——
-	// 空 = 原样; 与 imgproc 的 OSS base 是同一个概念）。
-	AssetBase string
+	// BaseURL 站点对外前缀（如 https://viicn.site 或 OSS 桶地址）——
+	// url 模板函数、rich 里的相对资源、imgproc 的图片地址**共用这一份**;
+	// 空 = 原样（本地开发）。
+	BaseURL string
 }
 
 // Render 渲染引擎（每个站点一个）。
 type Render struct {
 	site  *Site
 	root  string
-	asset string
+	base  string
 	funcs map[string]reflect.Value
 }
 
@@ -67,7 +73,7 @@ func NewRender(site *Site, options RenderOptions) (*Render, error) {
 	}
 	out := &Render{
 		site: site, root: root,
-		asset: strings.TrimRight(strings.TrimSpace(options.AssetBase), "/"),
+		base:  strings.TrimRight(strings.TrimSpace(options.BaseURL), "/"),
 		funcs: map[string]reflect.Value{},
 	}
 	for name, fn := range options.Funcs {
@@ -129,6 +135,61 @@ func (r *Render) Partial(ctx *CmsCtx, name string, data any) (template.HTML, err
 	return template.HTML(buf.String()), nil //nolint:gosec // 模板自己产出的 HTML
 }
 
+// ServeNode 渲染一个内容页: ref（id 或地址）→ 读入口 → 级联模板 → 404。
+//
+// 三件事都在这里钉死（每个服务端渲染的站都要, 站点重写一遍就会漏一处）:
+//
+//	读入口: 读不到的节点渲染 404（存在性不泄漏）
+//	级联:   node--{type}.html → node.html
+//	404:    回 404 状态 + 尽量渲染 404.html（没有就退回纯文本）
+//
+// 模板数据只有 {Node, Path} —— 树/站点配置这类由站点自己的模板函数给（tree/pageNodes …），
+// 所以框架不背站点的数据形状。
+func (r *Render) ServeNode(ctx *CmsCtx, ref any) error {
+	// 全局解析（不分类型）: 数字当 id, 其余当地址（地址全表唯一）
+	node, err := r.site.engine.GetNode(ref)
+	if err != nil {
+		if errors.Is(err, core.ErrNotFound) {
+			return r.serveNotFound(ctx)
+		}
+		return CoreError(err)
+	}
+	if node == nil {
+		return r.serveNotFound(ctx)
+	}
+	// 再用**它自己的类型**过读入口（读规则/掩码/展开照旧 —— 页面的第一道闸门）
+	visible, err := ctx.Get(node.Type, node.ID)
+	if err != nil || visible == nil {
+		return r.serveNotFound(ctx)
+	}
+	data := map[string]any{"Node": visible, "Path": ctx.R.URL.Path}
+	err = r.Render(ctx, ctx.W, []string{"node--" + visible.Type + ".html", "node.html"}, data)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// serveNotFound 404: 状态码 + 尽力渲染 404.html（缺了不报二次错）。
+func (r *Render) serveNotFound(ctx *CmsCtx) error {
+	var buf strings.Builder
+	full := filepath.Join(r.root, filepath.Clean("/404.html"))
+	if _, err := os.Stat(full); err == nil {
+		err = r.execute(ctx, &buf, full, map[string]any{"Path": ctx.R.URL.Path})
+		if err != nil {
+			slog.Error("web: render 404 page", "err", err.Error())
+		}
+	}
+	body := buf.String()
+	if body == "" {
+		body = "404 page not found"
+	}
+	ctx.W.Header().Set("Content-Type", "text/html; charset=utf-8")
+	ctx.W.WriteHeader(http.StatusNotFound)
+	_, err := ctx.W.Write([]byte(body))
+	return err
+}
+
 // execute 单个模板文件独立解析执行（无缓存 ⇒ 改文件下一请求生效）。
 func (r *Render) execute(ctx *CmsCtx, w io.Writer, full string, data any) error {
 	tpl, err := template.New(filepath.Base(full)).Funcs(r.funcMap(ctx)).ParseFiles(full)
@@ -152,15 +213,8 @@ func (r *Render) funcMap(ctx *CmsCtx) template.FuncMap {
 		"date":    formatDate,
 		"default": defaultValue,
 		"join":    joinStrings,
-		"asset":   r.assetURL,
+		"url":     r.url,
 		"partial": func(name string, data any) (template.HTML, error) { return r.Partial(ctx, name, data) },
-		"partialOr": func(name string, fallback string, data any) template.HTML {
-			rendered, err := r.Partial(ctx, name, data)
-			if err != nil {
-				return template.HTML(template.HTMLEscapeString(fallback)) //nolint:gosec
-			}
-			return rendered
-		},
 	}
 	for name, fn := range r.funcs {
 		out[name] = bindContext(ctx, fn)
@@ -203,25 +257,39 @@ func (r *Render) rich(value any) template.HTML {
 	if text == "" {
 		return ""
 	}
-	if r.asset != "" {
-		text = richSrcPattern.ReplaceAllString(text, `$1="`+r.asset+`$2"`)
+	if r.base != "" {
+		text = richSrcPattern.ReplaceAllString(text, `$1="`+r.base+`$2"`)
 	}
 	return template.HTML(text) //nolint:gosec // 富文本在写路径上已过白名单（见上传/写规则）
 }
 
-// asset 相对路径 → 带 AssetBase 的地址（空 base = 原样）。
-func (r *Render) assetURL(value any) string {
+// url 节点或路径 → 站内地址（带 BaseURL）。
+//
+//	{{ .Node | url }}          → BaseURL + "/" + node.address（地址是稳定的 URL 段）
+//	{{ url "/uploads/a.png" }} → BaseURL + "/uploads/a.png"
+//
+// 节点没有 address ⇒ **报错**（不是静默给个空 href —— 那会让链接悄悄坏掉）。
+func (r *Render) url(value any) (string, error) {
+	switch typed := value.(type) {
+	case *core.Node:
+		if typed.Address == nil || *typed.Address == "" {
+			return "", fmt.Errorf("web: render: 节点 #%d（%s）没有 address, 拼不出 URL", typed.ID, typed.Type)
+		}
+		return r.base + "/" + strings.TrimPrefix(*typed.Address, "/"), nil
+	case core.Node:
+		return r.url(&typed)
+	}
 	path, _ := value.(string)
 	if path == "" {
-		return ""
+		return "", nil
 	}
-	if r.asset == "" || strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
-		return path
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		return path, nil
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	return r.asset + path
+	return r.base + path, nil
 }
 
 // excerpt 富文本 → 纯文本 + 按**字符**截断（按字节中文会烂）。
