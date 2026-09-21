@@ -41,11 +41,7 @@ types:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = site.Close() })
-	render, err := NewRender(site, RenderOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return site, render
+	return site, site.Render()
 }
 
 func renderOf(t *testing.T, render *Render, site *Site, candidates []string, data any) string {
@@ -83,23 +79,22 @@ func TestRenderCascade(t *testing.T) {
 // 内置函数: rich/excerpt/date/default/join/asset + partial/partialOr。
 func TestRenderBuiltins(t *testing.T) {
 	site, render := renderSite(t, map[string]string{
-		"page.html": `{{ rich .Body }}|{{ excerpt .Body 4 }}|{{ date .At }}|{{ .Missing | default "—" }}|{{ join "," .Tags }}|{{ url "uploads/a.png" }}|{{ partial "card.html" . }}`,
+		"page.html": `{{ rich .Body }}|{{ excerpt .Body 4 }}|{{ date .At }}|{{ .Missing | default "—" }}|{{ join "," .Tags }}|{{ url "uploads/a.png" }}|{{ url .Node }}|{{ partial "card.html" . }}`,
 		"card.html": "CARD:{{ .Title }}",
 	})
-	render.base = "https://cdn.example.com"
 	data := map[string]any{
 		"Title": "标题", "Body": "<p>新能源产业对接</p>", "At": int64(1784367000),
 		"Tags": []string{"a", "b"},
 	}
 	got := renderOf(t, render, site, []string{"page.html"}, data)
 	for _, want := range []string{
-		"<p>新能源产业对接</p>",                        // rich: 不转义
-		"新能源产…",                                 // excerpt: 按字符截断（4 个字符 + 省略号）
-		"2026-07-18",                            // date: Unix 秒 → 日期
-		"—",                                     // default: 空值兜底
-		"a,b",                                   // join
-		"https://cdn.example.com/uploads/a.png", // url: 带前缀
-		"CARD:标题",                               // partial
+		"<p>新能源产业对接</p>", // rich: 不转义
+		"新能源产…",          // excerpt: 按字符截断（4 个字符 + 省略号）
+		"2026-07-18",     // date: Unix 秒 → 日期
+		"—",              // default: 空值兜底
+		"a,b",            // join
+		"/uploads/a.png", // url: 路径（不带 base —— render 不管 baseURL）
+		"CARD:标题",        // partial
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("渲染结果少了 %q:\n%s", want, got)

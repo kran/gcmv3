@@ -34,55 +34,11 @@ import (
 	"github.com/kran/gcmv3/core"
 )
 
-// RenderOptions 渲染引擎配置。
-type RenderOptions struct {
-	// Root 模板目录（相对 baseDir; 空 = "templates"）。
-	Root string
-	// Funcs 站点自定义模板函数（与 Render.Func 等价, 图省事在这里一起给）。
-	Funcs map[string]any
-	// BaseURL 站点对外前缀（如 https://viicn.site 或 OSS 桶地址）——
-	// url 模板函数、rich 里的相对资源、imgproc 的图片地址**共用这一份**;
-	// 空 = 原样（本地开发）。
-	BaseURL string
-}
-
-// Render 渲染引擎（每个站点一个）。
+// Render 渲染引擎（每个站点一个; 见 Site.Render()）。
 type Render struct {
 	site  *Site
 	root  string
-	base  string
 	funcs map[string]reflect.Value
-}
-
-// NewRender 建渲染引擎。Root 不存在 ⇒ 直接报错（站点忘了放 templates 目录时,
-// 应该在建站期就知道, 而不是等第一个请求 500）。
-func NewRender(site *Site, options RenderOptions) (*Render, error) {
-	if site == nil {
-		return nil, fmt.Errorf("web: render: site is required")
-	}
-	root := strings.TrimSpace(options.Root)
-	if root == "" {
-		root = "templates"
-	}
-	if !filepath.IsAbs(root) {
-		root = filepath.Join(site.BaseDir(), root)
-	}
-	info, err := os.Stat(root)
-	if err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("web: render: 模板目录不可用: %s", root)
-	}
-	out := &Render{
-		site: site, root: root,
-		base:  strings.TrimRight(strings.TrimSpace(options.BaseURL), "/"),
-		funcs: map[string]reflect.Value{},
-	}
-	for name, fn := range options.Funcs {
-		err := out.Func(name, fn)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return out, nil
 }
 
 // Func 注册模板函数（站点/插件扩展点, 如 own 的 url / oss / 数据查询）。
@@ -102,11 +58,28 @@ func (r *Render) Func(name string, fn any) error {
 	if kind.NumOut() != 2 || !kind.Out(1).Implements(reflect.TypeFor[error]()) {
 		return fmt.Errorf("web: render: %s 的签名要是 func(...) (值, error)", name)
 	}
-	if kind.NumIn() > 0 && kind.In(0) == reflect.TypeFor[*CmsCtx]() {
-		// 带上下文: 调用时注入
-	}
 	r.funcs[name] = value
 	return nil
+}
+
+// renderRoot 模板目录（相对 baseDir —— 与 static/uploads 同级, 框架约定）。
+const renderRoot = "templates"
+
+// Render 取渲染引擎（懒创建: root 固定为 baseDir/templates, 不配置）。
+//
+// 站点在 Open 之后直接:
+//
+//	render := site.Render()
+//	render.Func("nodes", …)        // 注册数据/管道函数（插件也用它注册自己的管道）
+//	render.ServeNode(ctx, ref, data)
+//
+// 根目录走**约定**（baseDir/templates）—— 与 static/uploads 一样是站点固定的东西,
+// 没有第二种放法, 所以不给配置项。目录不存在 ⇒ Setup() 当场失败（不等到第一个请求）。
+func (s *Site) Render() *Render {
+	if s.render == nil {
+		s.render = &Render{site: s, root: filepath.Join(s.basedir, renderRoot), funcs: map[string]reflect.Value{}}
+	}
+	return s.render
 }
 
 // Render 按候选序取第一个存在的模板执行（级联: node--{type}.html → node.html）。
@@ -257,25 +230,18 @@ func bindContext(ctx *CmsCtx, fn reflect.Value) any {
 
 // ── 内置函数（只留内容站必然要、写错了会踩坑的那几个）──
 
-// rich 富文本 → 安全 HTML（模板里必须用, 否则 <p> 被转义成字面量）,
-// 并把站内相对资源补成带前缀的绝对地址（AssetBase）。
-var richSrcPattern = regexp.MustCompile(`(src|href)="(/(?:uploads|static)/[^"]+)"`)
-
+// rich 富文本 → 安全 HTML（模板里必须用, 否则 <p> 被转义成字面量）。
+// 不做地址加工 —— 站点自己注册的 url/oss 函数负责那件事（render 不管 baseURL）。
 func (r *Render) rich(value any) template.HTML {
 	text, _ := value.(string)
-	if text == "" {
-		return ""
-	}
-	if r.base != "" {
-		text = richSrcPattern.ReplaceAllString(text, `$1="`+r.base+`$2"`)
-	}
-	return template.HTML(text) //nolint:gosec // 富文本在写路径上已过白名单（见上传/写规则）
+	return template.HTML(text) //nolint:gosec // 富文本在写路径上已过白名单（见写规则）
 }
 
-// url 节点或路径 → 站内地址（带 BaseURL）。
+// url 节点或路径 → 站内路径（**不带**主机/base —— 那是站点部署的事, 由站点自己的
+// 模板函数或前端补; render 不管 baseURL）。
 //
-//	{{ .Node | url }}          → BaseURL + "/" + node.address（地址是稳定的 URL 段）
-//	{{ url "/uploads/a.png" }} → BaseURL + "/uploads/a.png"
+//	{{ .Node | url }}          → "/" + node.address
+//	{{ url "/uploads/a.png" }} → 原样（已经是路径）
 //
 // 节点没有 address ⇒ **报错**（不是静默给个空 href —— 那会让链接悄悄坏掉）。
 func (r *Render) url(value any) (string, error) {
@@ -284,7 +250,7 @@ func (r *Render) url(value any) (string, error) {
 		if typed.Address == nil || *typed.Address == "" {
 			return "", fmt.Errorf("web: render: 节点 #%d（%s）没有 address, 拼不出 URL", typed.ID, typed.Type)
 		}
-		return r.base + "/" + strings.TrimPrefix(*typed.Address, "/"), nil
+		return "/" + strings.TrimPrefix(*typed.Address, "/"), nil
 	case core.Node:
 		return r.url(&typed)
 	}
@@ -298,7 +264,7 @@ func (r *Render) url(value any) (string, error) {
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-	return r.base + path, nil
+	return path, nil
 }
 
 // excerpt 富文本 → 纯文本 + 按**字符**截断（按字节中文会烂）。

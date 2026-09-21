@@ -45,6 +45,7 @@ type Site struct {
 	db      *dba.SQL
 	types   *types.Types
 	engine  core.Engine
+	render  *Render // 懒创建（Site.Render()）—— 站点没渲染需求就不创建
 	router  *cho.Cho[*CmsCtx]
 	auth    *AuthRegistry
 	// loginLimiter 登录/注册失败限速（配置期可调; 见 limiter.go）。
