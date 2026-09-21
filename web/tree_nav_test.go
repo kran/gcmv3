@@ -61,3 +61,31 @@ func names(nodes []*core.Node) []string {
 	}
 	return out
 }
+
+// 模板用**地址**在树里导航（真实模板: {{ $t.Children "news" }}）—— 只按 id 索引会静默
+// 拿到根（字符串 cast 成 0），所以地址必须也能定位。
+func TestTreeResolveByAddress(t *testing.T) {
+	address := func(value string) *string { return &value }
+	root := &core.Node{ID: 1, Type: "category", Address: address("news"),
+		Fields: core.Fields{"name": "新闻"}}
+	child := &core.Node{ID: 2, Type: "category", Address: address("news-industry"),
+		Fields: core.Fields{"name": "行业", "parent": int64(1)}}
+	tree := BuildTree([]*core.Node{root, child}, "parent")
+
+	if got := tree.Get("news"); got == nil || got.ID != 1 {
+		t.Fatalf("按地址取节点: %#v", got)
+	}
+	if children := tree.Children("news"); len(children) != 1 || children[0].ID != 2 {
+		t.Fatalf("按地址取子级: %#v", names(children))
+	}
+	if ancestors := tree.Ancestors("news-industry"); len(ancestors) != 1 || ancestors[0].ID != 1 {
+		t.Fatalf("按地址取祖先链: %#v", names(ancestors))
+	}
+	if ids := tree.SubtreeIDs("news"); len(ids) != 2 {
+		t.Fatalf("按地址取子树 id: %#v", ids)
+	}
+	// 不认识的地址 ⇒ 当"没有"（返回根/空, 不 panic）
+	if got := tree.Children("nope"); len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("未知引用该退回根（只有 新闻 是根）: %#v", names(got))
+	}
+}

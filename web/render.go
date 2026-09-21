@@ -195,6 +195,13 @@ func (r *Render) funcMap(ctx *CmsCtx) template.FuncMap {
 		"date":    formatDate,
 		"default": defaultValue,
 		"join":    joinStrings,
+		"dict":    dictValue,
+		"merge":   mergeMaps,
+		"add":     func(a, b any) int64 { return toInt64(a) + toInt64(b) },
+		"append":  appendValue,
+		"until":   untilValue,
+		"first":   firstValue,
+		"sub":     func(a, b any) int64 { return toInt64(a) - toInt64(b) },
 		"url":     r.url,
 		"partial": func(name string, data any) (template.HTML, error) { return r.Partial(ctx, name, data) },
 	}
@@ -216,9 +223,14 @@ func bindContext(ctx *CmsCtx, fn reflect.Value) any {
 		for _, arg := range args {
 			in = append(in, reflect.ValueOf(arg))
 		}
-		// 参数个数/类型不对是**模板写错了** ⇒ 让它响亮地报出来（不静默给零值）
-		if len(in) != kind.NumIn() {
-			return nil, fmt.Errorf("模板函数参数个数不对: 给了 %d 个, 需要 %d 个", len(args), kind.NumIn()-boolToInt(withCtx))
+		// 参数个数不对是**模板写错了** ⇒ 响亮报出来（不静默给零值）。
+		// 变参函数只校验"至少够"（比如 oss 既支持 oss 路径, 也支持 oss 路径 w h mode）。
+		want := kind.NumIn() - boolToInt(withCtx)
+		switch {
+		case kind.IsVariadic() && len(args) < want-1:
+			return nil, fmt.Errorf("模板函数参数太少: 给了 %d 个, 至少 %d 个", len(args), want-1)
+		case !kind.IsVariadic() && len(in) != kind.NumIn():
+			return nil, fmt.Errorf("模板函数参数个数不对: 给了 %d 个, 需要 %d 个", len(args), want)
 		}
 		out := fn.Call(in)
 		if !out[1].IsNil() {
@@ -280,6 +292,94 @@ func excerpt(value any, limit int) string {
 }
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
+
+// appendValue 往切片末尾接一个元素（`{{ $list | append $x }}` -- 模板里拼导航/标签用）。
+func appendValue(list any, item any) ([]any, error) {
+	value := reflect.ValueOf(list)
+	if !value.IsValid() {
+		return []any{item}, nil
+	}
+	if value.Kind() != reflect.Slice && value.Kind() != reflect.Array {
+		return nil, fmt.Errorf("web: render: append 的第一个参数要是切片（收到 %T）", list)
+	}
+	out := make([]any, 0, value.Len()+1)
+	for i := range value.Len() {
+		out = append(out, value.Index(i).Interface())
+	}
+	return append(out, item), nil
+}
+
+// untilValue 0..n-1 的序列（模板里 {{ range until .PageNum }} 之类）。
+func untilValue(n any) []int {
+	total := int(toInt64(n))
+	if total <= 0 {
+		return nil
+	}
+	out := make([]int, total)
+	for i := range out {
+		out[i] = i
+	}
+	return out
+}
+
+// firstValue 取第一个元素（取不到返回 nil —— 模板里常配 default）。
+func firstValue(list any) any {
+	value := reflect.ValueOf(list)
+	if !value.IsValid() || (value.Kind() != reflect.Slice && value.Kind() != reflect.Array) || value.Len() == 0 {
+		return nil
+	}
+	return value.Index(0).Interface()
+}
+
+// dictValue 拼一个 map（模板里 `dict "k" v …` 造临时数据, 配合 merge/partial）。
+func dictValue(pairs ...any) (map[string]any, error) {
+	if len(pairs)%2 != 0 {
+		return nil, fmt.Errorf("web: render: dict 参数要成对（给了 %d 个）", len(pairs))
+	}
+	out := make(map[string]any, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		key, ok := pairs[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("web: render: dict 的键必须是字符串（第 %d 个是 %T）", i/2+1, pairs[i])
+		}
+		out[key] = pairs[i+1]
+	}
+	return out, nil
+}
+
+// mergeMaps 后者覆盖前者（模板里 `merge (dict …) .` 给 partial 补默认键）。
+func mergeMaps(values ...any) (map[string]any, error) {
+	out := map[string]any{}
+	for _, value := range values {
+		typed, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("web: render: merge 只吃 map, 收到 %T", value)
+		}
+		for key, item := range typed {
+			out[key] = item
+		}
+	}
+	return out, nil
+}
+
+func toInt64(value any) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int64:
+		return typed
+	case float64:
+		return int64(typed)
+	case string:
+		var parsed int64
+		_, err := fmt.Sscanf(typed, "%d", &parsed)
+		if err != nil {
+			return 0
+		}
+		return parsed
+	}
+	return 0
+}
 
 // formatDate Unix 秒 → 本地时间（默认 2006-01-02; 第二参可选 layout）。
 func formatDate(value any, layout ...string) string {

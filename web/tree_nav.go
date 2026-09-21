@@ -26,11 +26,12 @@ import (
 
 // Tree 一层节点拼成的导航树。
 type Tree struct {
-	nodes    []*core.Node
-	byID     map[int64]*core.Node
-	children map[int64][]*core.Node
-	roots    []*core.Node
-	parent   map[int64]int64
+	nodes     []*core.Node
+	byID      map[int64]*core.Node
+	byAddress map[string]*core.Node
+	children  map[int64][]*core.Node
+	roots     []*core.Node
+	parent    map[int64]int64
 }
 
 // BuildTree 拼树。nodes 必须**已经过读入口**（读不到的不会进来 —— 树不含策略）,
@@ -39,13 +40,17 @@ type Tree struct {
 // 三种"当根"的情形: 没有父、父不在这一层里（不可见/未发布）、自指 —— 都不丢节点。
 func BuildTree(nodes []*core.Node, parentField string) *Tree {
 	out := &Tree{
-		nodes:    nodes,
-		byID:     make(map[int64]*core.Node, len(nodes)),
-		children: map[int64][]*core.Node{},
-		parent:   map[int64]int64{},
+		nodes:     nodes,
+		byID:      make(map[int64]*core.Node, len(nodes)),
+		byAddress: map[string]*core.Node{},
+		children:  map[int64][]*core.Node{},
+		parent:    map[int64]int64{},
 	}
 	for _, node := range nodes {
 		out.byID[node.ID] = node
+		if node.Address != nil && *node.Address != "" {
+			out.byAddress[*node.Address] = node
+		}
 	}
 	for _, node := range nodes {
 		parentID := refID(node.Fields[parentField])
@@ -79,12 +84,25 @@ func (t *Tree) Roots() []*core.Node {
 	return t.roots
 }
 
-// Get 按 id 取节点（取不到返回 nil）。
+// Get 按 id **或地址**取节点（取不到返回 nil）。
+//
+// 地址也支持是因为**模板就是这么用的**: {{ $t.Children "news" }} —— 站点模板里
+// 导航传的是地址（地址是稳定的 URL 段, 而 id 是库内部的）。
 func (t *Tree) Get(ref any) *core.Node {
 	if t == nil {
 		return nil
 	}
-	return t.byID[refID(ref)]
+	return t.byID[t.resolve(ref)]
+}
+
+// resolve ref（id 或地址）→ id（取不到 = 0）。
+func (t *Tree) resolve(ref any) int64 {
+	if text, ok := ref.(string); ok {
+		if text != "" && t.byAddress[text] != nil {
+			return t.byAddress[text].ID
+		}
+	}
+	return refID(ref)
 }
 
 // Children 直接子级（ref 取不到 ⇒ nil; 传 0/nil 时给根）。
@@ -92,7 +110,7 @@ func (t *Tree) Children(ref any) []*core.Node {
 	if t == nil {
 		return nil
 	}
-	id := refID(ref)
+	id := t.resolve(ref)
 	if id == 0 {
 		return t.roots
 	}
@@ -104,7 +122,7 @@ func (t *Tree) Ancestors(ref any) []*core.Node {
 	if t == nil {
 		return nil
 	}
-	id := refID(ref)
+	id := t.resolve(ref)
 	if id == 0 {
 		return nil
 	}
@@ -130,7 +148,7 @@ func (t *Tree) Subtree(ref any) []*core.Node {
 	if t == nil {
 		return nil
 	}
-	id := refID(ref)
+	id := t.resolve(ref)
 	root, ok := t.byID[id]
 	if !ok {
 		return nil

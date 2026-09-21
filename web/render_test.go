@@ -201,3 +201,44 @@ func TestRenderServeNode(t *testing.T) {
 		t.Fatal("没有 address 的节点拼 URL 该报错")
 	}
 }
+
+// 模板语言原语（不用 sprig 的站点必然要）: dict / merge / add / sub,
+// 以及**变参**函数（真实模板里 oss 有两种参数个数: oss 路径 / oss 路径 w h mode）。
+func TestRenderPrimitivesAndVariadic(t *testing.T) {
+	site, render := renderSite(t, map[string]string{
+		"page.html": `{{ $d := dict "A" 1 "B" 2 }}{{ $m := merge $d (dict "B" 9 "C" 3) }}{{ $m.A }}{{ $m.B }}{{ $m.C }}|{{ add 2 3 }}|{{ sub 9 4 }}|{{ size 1 }}{{ size 2 3 4 }}`,
+	})
+	err := render.Func("size", func(parts ...any) (int, error) { return len(parts), nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := renderOf(t, render, site, []string{"page.html"}, nil)
+	if got != "193|5|5|13" {
+		t.Fatalf("原语/变参渲染: %q", got)
+	}
+	// dict 参数不成对 ⇒ 响亮报错
+	err = render.Func("bad", func(_ *CmsCtx, values ...any) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dictValue("k"); err == nil {
+		t.Fatal("dict 参数不成对该报错")
+	}
+	if _, err := mergeMaps(1); err == nil {
+		t.Fatal("merge 非 map 该报错")
+	}
+}
+
+// append: 往切片接元素（模板里拼导航用; 第一个参数必须是切片, 否则响亮报错）。
+func TestRenderAppend(t *testing.T) {
+	got, err := appendValue([]int{1, 2}, 3)
+	if err != nil || len(got) != 3 || got[2] != 3 {
+		t.Fatalf("append: %v %v", got, err)
+	}
+	if got, err := appendValue(nil, "x"); err != nil || len(got) != 1 {
+		t.Fatalf("append nil: %v %v", got, err)
+	}
+	if _, err := appendValue("不是切片", 1); err == nil {
+		t.Fatal("append 非切片该报错")
+	}
+}
