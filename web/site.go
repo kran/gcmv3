@@ -15,13 +15,16 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,13 +33,19 @@ import (
 	"github.com/kran/dba"
 	"github.com/kran/gcmv3/core"
 	"github.com/kran/gcmv3/types"
+	"gopkg.in/yaml.v3"
 	_ "modernc.org/sqlite" // sqlite driver 注册
 )
 
 // 站点固定路径（basedir 下）。模板/上传等目录等用到时再进来。
 const (
-	dbFile    = "gcm.sqlite"
-	typesFile = "types.yaml"
+	dbFile = "gcm.sqlite"
+	// siteFile 站点声明（站点名 + 类型定义）。
+	//
+	// 名字从 site.yaml 改过来是对的: 这份文件声明的是"**这个站**"（类型只是其中一块,
+	// 以后 search/sitemap 的收录范围也可以进来）。老的 site.yaml 仍然认（兜底 +
+	// 一条提示日志）, 免得每个站都要同时改。
+	siteFile = "site.yaml"
 )
 
 // Site 站点 —— 一个引擎 + 一个路由器 + 一处站点目录。
@@ -44,6 +53,7 @@ type Site struct {
 	basedir string
 	db      *dba.SQL
 	types   *types.Types
+	name    string // 站点名（site.yaml 的 name）—— 后台左上角显示它
 	engine  core.Engine
 	render  *Render // 懒创建（Site.Render()）—— 站点没渲染需求就不创建
 	router  *cho.Cho[*CmsCtx]
@@ -101,7 +111,7 @@ func Open(basedir string, opts ...Option) (*Site, error) {
 		_ = db.Pool().Close()
 		return nil, err
 	}
-	ts, err := loadTypes(filepath.Join(basedir, typesFile))
+	name, ts, err := loadSite(basedir)
 	if err != nil {
 		_ = db.Pool().Close()
 		return nil, err
@@ -115,7 +125,7 @@ func Open(basedir string, opts ...Option) (*Site, error) {
 	defineWebHooks(engine)
 	defineAuthHooks(engine)
 	defineAdminHooks(engine)
-	site := &Site{basedir: basedir, db: db, types: ts, engine: engine}
+	site := &Site{basedir: basedir, name: name, db: db, types: ts, engine: engine}
 	site.auth = newAuthRegistry(site)
 	// 每个 auth 能力类型自动一条同名渠道（站点显式 Register 覆盖它）
 	site.auth.registerDefaults()
@@ -163,6 +173,9 @@ func (s *Site) Engine() core.Engine { return s.engine }
 
 // Types 类型系统。
 func (s *Site) Types() *types.Types { return s.types }
+
+// Name 站点名（site.yaml 的 name; 空 = 没声明）—— 后台左上角/登录副标题显示它。
+func (s *Site) Name() string { return s.name }
 
 // BaseDir 站点根目录（库/类型/static/uploads 都在它下面）—— 站点与插件要读写自己的
 // 文件时用它（框架自己不用: 它只知道基于它的固定路径）。
@@ -213,17 +226,47 @@ func quietLogger(logger *slog.Logger) dba.LogFunc {
 	}
 }
 
-func loadTypes(path string) (*types.Types, error) {
-	data, err := os.ReadFile(path)
+// loadSite 读站点声明: name（后台显示用）+ types（交给 types.Load, 校验口径不变）。
+//
+// 两份文件都开严格解析（KnownFields）: 键名拼错当场报错, 不静默忽略。
+// loadSite 读站点声明: name（后台显示用）+ types（交给 types.Load, 校验口径不变）。
+//
+// 一份声明一个名字（site.yaml）—— 不留旧名兜底: 少一个分支, 拼错路径也不会静默用别的东西。
+// 两个解析都开严格模式（KnownFields）⇒ 键名拼错当场报错。
+func loadSite(basedir string) (string, *types.Types, error) {
+	path := filepath.Join(basedir, siteFile)
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("web: read types: %w", err)
+		return "", nil, fmt.Errorf("web: 读站点声明 %s: %w（站点根目录下必须有它）", siteFile, err)
+	}
+	var doc struct {
+		Name  string    `yaml:"name"`
+		Types yaml.Node `yaml:"types"`
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	err = decoder.Decode(&doc)
+	if err != nil {
+		return "", nil, fmt.Errorf("web: 解析 %s: %w", siteFile, err)
+	}
+	if strings.TrimSpace(doc.Name) == "" {
+		// 不拦（但说一声）: 后台左上角会显示为空
+		log.Printf("web: %s 缺少 name: —— 后台左上角会显示为空", siteFile)
+	}
+	// 类型子树按原样交给 types.Load（它自己再开一次严格解析 —— 两边都严, 拼错都报错）
+	// yaml.Node 要放在**结构体字段**里才能往返（塞进 map[string]any 会变成 interface{} 炸）
+	typesRaw, err := yaml.Marshal(struct {
+		Types yaml.Node `yaml:"types"`
+	}{Types: doc.Types})
+	if err != nil {
+		return "", nil, fmt.Errorf("web: 转 types 子树: %w", err)
 	}
 	ts := types.New()
-	err = ts.Load(data)
+	err = ts.Load(typesRaw)
 	if err != nil {
-		return nil, fmt.Errorf("web: load types: %w", err)
+		return "", nil, fmt.Errorf("web: load types: %w", err)
 	}
-	return ts, nil
+	return strings.TrimSpace(doc.Name), ts, nil
 }
 
 // applySchema 建引擎的基础表（幂等: DDL 全是 IF NOT EXISTS）。

@@ -20,7 +20,7 @@ types:
       - { name: title, kind: text }
 `
 
-// newTestSite 建一个临时站点（types.yaml + 空库目录; 表由 Open 自己建）。
+// newTestSite 建一个临时站点（site.yaml + 空库目录; 表由 Open 自己建）。
 func newTestSite(t *testing.T) *Site {
 	t.Helper()
 	basedir := t.TempDir()
@@ -33,9 +33,9 @@ func newTestSite(t *testing.T) *Site {
 	return site
 }
 
-// writeTypesFile 写 types.yaml（站点目录里必须有它）。
+// writeTypesFile 写 site.yaml（站点目录里必须有它）。
 func writeTypesFile(basedir, yaml string) error {
-	return os.WriteFile(filepath.Join(basedir, typesFile), []byte(yaml), 0o644)
+	return os.WriteFile(filepath.Join(basedir, siteFile), []byte(yaml), 0o644)
 }
 
 func writeTypes(t *testing.T, basedir string) {
@@ -116,11 +116,11 @@ func TestOpenAppliesSchema(t *testing.T) {
 	}
 }
 
-// types.yaml 读不到 / 解析不了 ⇒ 报错（不是起个空类型系统）。
+// site.yaml 读不到 / 解析不了 ⇒ 报错（不是起个空类型系统）。
 func TestOpenRequiresTypes(t *testing.T) {
 	basedir := t.TempDir()
 	_, err := Open(basedir)
-	if err == nil || !strings.Contains(err.Error(), "read types") {
+	if err == nil || !strings.Contains(err.Error(), "site.yaml") {
 		t.Fatalf("err = %v", err)
 	}
 }

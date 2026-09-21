@@ -19,7 +19,7 @@ import (
 func newHarness(t *testing.T) (*web.Site, http.Handler, string, string) {
 	t.Helper()
 	basedir := t.TempDir()
-	err := os.WriteFile(filepath.Join(basedir, "types.yaml"), []byte(`
+	err := os.WriteFile(filepath.Join(basedir, "site.yaml"), []byte(`
 types:
   staff:
     capabilities:

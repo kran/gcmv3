@@ -90,7 +90,7 @@ func newAuthRegistry(site *Site) *AuthRegistry {
 // registerDefaults 给每个声明了 authentication 能力的类型自动注册一条**同名渠道**。
 //
 // 为什么这样做: "类型声明了能登录" 是站点的明确意图（authentication 词表就在
-// types.yaml 里），那么"有一条能用的登录入口"是自然推论 —— 否则类型声明了却登不
+// site.yaml 里），那么"有一条能用的登录入口"是自然推论 —— 否则类型声明了却登不
 // 进来（每个站点都要记得写一遍 Auth().Register, 漏了就是"后台登录不了"）。
 //
 // 站点显式 Register 会**覆盖**它（补 RegisterMethods / Default 等）; 名字 = 类型名,
@@ -194,7 +194,9 @@ func (s *Site) authMe(ctx *CmsCtx) {
 		ctx.Fail(err)
 		return
 	}
-	_ = ctx.Json(http.StatusOK, map[string]any{"actor": ctx.Actor(), "node": masked})
+	_ = ctx.Json(http.StatusOK, map[string]any{
+		"actor": ctx.Actor(), "node": masked, "site": s.name,
+	})
 }
 
 // authLogout POST /api/auth/logout —— **与渠道无关**: 一个浏览器一个会话。
@@ -271,6 +273,6 @@ func (c *CmsCtx) respondLogin(token string) error {
 		return err
 	}
 	return c.Json(http.StatusOK, map[string]any{
-		"token": token, "actor": c.Actor(), "node": masked,
+		"token": token, "actor": c.Actor(), "node": masked, "site": c.site.name,
 	})
 }

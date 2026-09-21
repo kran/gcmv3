@@ -80,7 +80,7 @@ func (s *Site) adminAuthSet(ctx *CmsCtx) {
 	// 只允许声明过的**口令类**方式: 否则就是把一条不该走口令核验的凭据写成口令
 	//（比如 method=wechat —— 那条本该只认 openid）。
 	if !s.types.HasAuthMethod(typeName, input.Method) {
-		ctx.Fail(BadRequest("类型 %q 不支持口令方式 %q（见 types.yaml 的 authentication.methods）",
+		ctx.Fail(BadRequest("类型 %q 不支持口令方式 %q（见 site.yaml 的 authentication.methods）",
 			typeName, input.Method))
 		return
 	}

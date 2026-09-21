@@ -33,7 +33,7 @@ types:
 func newSite(t *testing.T) *web.Site {
 	t.Helper()
 	basedir := t.TempDir()
-	err := os.WriteFile(filepath.Join(basedir, "types.yaml"), []byte(testTypes), 0o600)
+	err := os.WriteFile(filepath.Join(basedir, "site.yaml"), []byte(testTypes), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

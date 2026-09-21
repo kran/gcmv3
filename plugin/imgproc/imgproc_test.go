@@ -22,7 +22,7 @@ import (
 func newSite(t *testing.T) (*web.Site, string) {
 	t.Helper()
 	basedir := t.TempDir()
-	err := os.WriteFile(filepath.Join(basedir, "types.yaml"), []byte(`
+	err := os.WriteFile(filepath.Join(basedir, "site.yaml"), []byte(`
 types:
   article:
     fields:
@@ -45,8 +45,8 @@ types:
 func writePNG(t *testing.T, basedir, name string, width, height int) string {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	for x := 0; x < width; x++ {
-		for y := 0; y < height; y++ {
+	for x := range width {
+		for y := range height {
 			img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 128, A: 255})
 		}
 	}

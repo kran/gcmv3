@@ -138,7 +138,7 @@ types:
 	}
 }
 
-// newInboundSite 用自带的 types.yaml 起站点（策略必须在 Setup 之前注册 —— 与
+// newInboundSite 用自带的 site.yaml 起站点（策略必须在 Setup 之前注册 —— 与
 // newPolicySite 同一套路）。
 func newInboundSite(t *testing.T) *Site {
 	t.Helper()

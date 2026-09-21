@@ -47,7 +47,7 @@ type harness struct {
 func newHarness(t *testing.T, options Options, configure ...func(*web.Site)) *harness {
 	t.Helper()
 	basedir := t.TempDir()
-	err := os.WriteFile(filepath.Join(basedir, "types.yaml"), []byte(testTypes), 0o600)
+	err := os.WriteFile(filepath.Join(basedir, "site.yaml"), []byte(testTypes), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestSearchCursorPaging(t *testing.T) {
 // fail-loud: 配错就当场报错, 不静默"永远搜不到"。
 func TestMountFailsLoud(t *testing.T) {
 	basedir := t.TempDir()
-	err := os.WriteFile(filepath.Join(basedir, "types.yaml"), []byte(testTypes), 0o600)
+	err := os.WriteFile(filepath.Join(basedir, "site.yaml"), []byte(testTypes), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -90,7 +90,7 @@ func (s *Site) authLogin(ctx *CmsCtx) {
 	// 不校验的后果是个后门: 别的登录机制（微信那种）的凭据里一旦被写进 password,
 	// 拿它当 (方法, 标识, 口令) 就能走口令登录 —— 那条凭据本该只走插件自己的核验。
 	if !s.types.HasAuthMethod(realm.NodeType, input.Method) {
-		ctx.Fail(BadRequest("类型 %q 不支持口令方式 %q（见 types.yaml 的 authentication.methods）",
+		ctx.Fail(BadRequest("类型 %q 不支持口令方式 %q（见 site.yaml 的 authentication.methods）",
 			realm.NodeType, input.Method))
 		return
 	}
@@ -229,7 +229,7 @@ func (s *Site) authBind(ctx *CmsCtx) {
 		return
 	}
 	if !s.types.HasAuthMethod(realm.NodeType, input.Method) {
-		ctx.Fail(BadRequest("类型 %q 不支持口令方式 %q（见 types.yaml 的 authentication.methods）",
+		ctx.Fail(BadRequest("类型 %q 不支持口令方式 %q（见 site.yaml 的 authentication.methods）",
 			realm.NodeType, input.Method))
 		return
 	}

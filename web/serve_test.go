@@ -88,9 +88,9 @@ func TestServeStatic(t *testing.T) {
 	}
 	// 路径穿越
 	for _, target := range []string{
-		"/static/../types.yaml",
-		"/static/..%2ftypes.yaml",
-		"/static/sub/../../types.yaml",
+		"/static/../site.yaml",
+		"/static/..%2fsite.yaml",
+		"/static/sub/../../site.yaml",
 	} {
 		got := do(t, site, http.MethodGet, target)
 		if got.Code == http.StatusOK && strings.Contains(got.Body.String(), "types:") {
