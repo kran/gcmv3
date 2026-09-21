@@ -16,10 +16,9 @@
             <inbound-panel v-if="showsInbounds" :type="editingType" :node-id="node.id" :defs="defs" />
 
             <p v-if="maskedFields.length" class="fr-hint">
-                有 {{ maskedFields.length }} 个字段你看不到（读规则裁掉了）—— 保存不会动它们。
+                有 {{ maskedFields.length }} 个隐藏字段
             </p>
             <p v-if="nothingWritable" class="fr-hint">
-                这个类型在当前身份下**没有可改的字段**（服务端没有写规则或字段全被裁掉）——
                 整份表单只读。
             </p>
         </el-form>
