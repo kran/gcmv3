@@ -84,7 +84,9 @@ func TestAdminAuthSetThenLogin(t *testing.T) {
 	}
 
 	// 解绑 ⇒ 登不上了
-	remove := jsonDo(t, site, http.MethodDelete, "/admin/auth/member/"+strconv.FormatInt(targetID, 10)+"/email", "",
+	// 解绑**要带标识**（同一个方式理论上只有一条, 但历史数据可能多条 ⇒ 按方式删会连删）
+	remove := jsonDo(t, site, http.MethodDelete,
+		"/admin/auth/member/"+strconv.FormatInt(targetID, 10)+"/email?identifier=new@x.com", "",
 		bearerOf(t, site, owner))
 	if remove.Code != http.StatusNoContent {
 		t.Fatalf("解绑 = %d: %s", remove.Code, remove.Body.String())
@@ -105,7 +107,8 @@ func TestAdminAuthRemoveLastIsNotServerError(t *testing.T) {
 		`{"method":"email","identifier":"only@x.com","secret":"secret123"}`, bearerOf(t, site, owner))
 
 	response := jsonDo(t, site, http.MethodDelete,
-		"/admin/auth/member/"+strconv.FormatInt(targetID, 10)+"/email", "", bearerOf(t, site, owner))
+		"/admin/auth/member/"+strconv.FormatInt(targetID, 10)+"/email?identifier=only@x.com", "",
+		bearerOf(t, site, owner))
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("删最后一条该 400（不是 500）, 实际 %d: %s", response.Code, response.Body.String())
 	}
@@ -176,4 +179,50 @@ func bearerOf(t *testing.T, site *Site, cms *CmsCtx) func(*http.Request) {
 		t.Fatal(err)
 	}
 	return withBearer(token)
+}
+
+// 换登录名 = **覆盖同方式的凭据**（不是多加一条）: 旧标识立刻登不上, 新标识能登, 列表只剩一条。
+//
+// 真实事故: /account 的"账号"字段走 bind ⇒ 库里多一条、旧名字照样能登录, 面板显示两条。
+func TestAdminAuthRebindReplacesIdentifier(t *testing.T) {
+	site := newPolicySiteWithMemberRead(t)
+	owner := ownerCtx(t, site)
+	targetID := createMemberNode(t, site, "改登录名的人")
+	path := "/admin/auth/member/" + strconv.FormatInt(targetID, 10)
+
+	first := jsonDo(t, site, http.MethodPost, path,
+		`{"method":"email","identifier":"old@x.com","secret":"secret123"}`, bearerOf(t, site, owner))
+	if first.Code != http.StatusNoContent {
+		t.Fatalf("首次绑定 = %d: %s", first.Code, first.Body.String())
+	}
+	second := jsonDo(t, site, http.MethodPost, path,
+		`{"method":"email","identifier":"new@x.com","secret":"secret456"}`, bearerOf(t, site, owner))
+	if second.Code != http.StatusNoContent {
+		t.Fatalf("换标识 = %d: %s", second.Code, second.Body.String())
+	}
+
+	// 列表里只有新的（且只有一条 email）
+	list := jsonDo(t, site, http.MethodGet, path, "", bearerOf(t, site, owner))
+	body := list.Body.String()
+	if !strings.Contains(body, "new@x.com") || strings.Contains(body, "old@x.com") {
+		t.Fatalf("列表该只剩新标识: %s", body)
+	}
+
+	// 旧标识登不上、新标识能登（这条才是"改名"的真正含义）
+	oldLogin := jsonDo(t, site, http.MethodPost, "/api/auth/member/login",
+		`{"method":"email","identifier":"old@x.com","secret":"secret123"}`)
+	if oldLogin.Code == http.StatusOK {
+		t.Fatal("换标识之后旧标识不该还能登录")
+	}
+	newLogin := jsonDo(t, site, http.MethodPost, "/api/auth/member/login",
+		`{"method":"email","identifier":"new@x.com","secret":"secret456"}`)
+	if newLogin.Code != http.StatusOK {
+		t.Fatalf("新标识该能登录, 实际 %d: %s", newLogin.Code, newLogin.Body.String())
+	}
+
+	// 解绑不写标识 ⇒ 400（不允许按方式连删）
+	noIdentifier := jsonDo(t, site, http.MethodDelete, path+"/email", "", bearerOf(t, site, owner))
+	if noIdentifier.Code != http.StatusBadRequest {
+		t.Fatalf("不带标识的解绑该 400, 实际 %d: %s", noIdentifier.Code, noIdentifier.Body.String())
+	}
 }

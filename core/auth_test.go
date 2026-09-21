@@ -151,10 +151,65 @@ func TestSetAuthMethod(t *testing.T) {
 	if m == nil || m.Data.Str("password") != "h2" {
 		t.Fatalf("改密码没生效: %#v", m)
 	}
-	// 抢别人的标识 ⇒ 拒
+	// 抢别人的标识 ⇒ 拒, 且归一到 ErrDuplicate（上层据此回 409; 以前是普通 error ⇒ 500）
 	err = gcm.SetAuthMethod(nil, "member", b, "email", "a@x.com", Fields{"password": "h3"})
-	if err == nil || !strings.Contains(err.Error(), "another node") {
-		t.Fatalf("err = %v", err)
+	if !errors.Is(err, ErrDuplicate) {
+		t.Fatalf("抢别人的标识该 ErrDuplicate, 实际 %v", err)
+	}
+}
+
+// SetAuthMethod 按**方式**覆盖: 同一个账号的同一个方式只留一条（换登录名 = 覆盖, 不是多加一条）。
+//
+// 这条是被真实事故钉出来的: 原来按 (类型, 方式, 标识) upsert ⇒ "/account 改登录名"之后库里
+// 有两条 username、**旧名字照样能登录**, 而凭据面板显示两条。
+func TestSetAuthMethodReplacesSameMethod(t *testing.T) {
+	gcm := openAuthFixture(t)
+	a, err := gcm.CreateNode(nil, &Node{Type: "member", Fields: Fields{"name": "甲"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = gcm.SetAuthMethod(nil, "member", a, "username", "old", Fields{"password": "h1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = gcm.SetAuthMethod(nil, "member", a, "username", "new", Fields{"password": "h2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 旧标识没了、新标识在
+	old1, err := gcm.FindAuth("member", "username", "old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if old1 != nil {
+		t.Fatalf("换标识后旧的还在: %#v", old1)
+	}
+	fresh, err := gcm.FindAuth("member", "username", "new")
+	if err != nil || fresh == nil {
+		t.Fatalf("新标识没建上: %v %#v", err, fresh)
+	}
+	// 该账号该方式只剩一条
+	methods, err := gcm.AuthMethodsOf("member", a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, m := range methods {
+		if m.Method == "username" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("同一个方式该只剩 1 条, 实际 %d: %#v", count, methods)
+	}
+	// 不同方式仍然并存
+	err = gcm.SetAuthMethod(nil, "member", a, "phone", "13800138000", Fields{"password": "h2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	methods, err = gcm.AuthMethodsOf("member", a)
+	if err != nil || len(methods) != 2 {
+		t.Fatalf("不同方式该并存（2 条）, 实际 %d: %v", len(methods), err)
 	}
 }
 

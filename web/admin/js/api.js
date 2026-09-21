@@ -38,7 +38,10 @@ window.$api = {
         return Panel.get('/admin/auth/' + type + '/' + id, null, { quiet: true })
     },
     authSet:     function (type, id, body) { return Panel.post('/admin/auth/' + type + '/' + id, body) },
-    authRemove:  function (type, id, method) { return Panel.del('/admin/auth/' + type + '/' + id + '/' + method) },
+    // 解绑**必须带标识**: 同一个方式可能有多条历史凭据, 只按方式删会连删（踩过）
+    authRemove:  function (type, id, method, identifier) {
+        return Panel.del('/admin/auth/' + type + '/' + id + '/' + method + '?identifier=' + encodeURIComponent(identifier))
+    },
 
     // 反向引用列表（admin.inbounds）—— 静默: 拿不到就整块不显示
     inbounds: function (type, id) {

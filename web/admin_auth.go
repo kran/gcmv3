@@ -123,35 +123,43 @@ func (s *Site) adminAuthRemove(ctx *CmsCtx) {
 		ctx.Fail(BadRequest("method 必填"))
 		return
 	}
+	// 标识**必填**。同一个方式在正常路径下只会有一条（SetAuthMethod 按方式覆盖）, 但
+	// 历史数据里可能有多条 —— 只按 method 删会一次删掉好几条（实测踩过: 连删两条,
+	// 只在最后一条被“最后凭据”守卫拦住）。所以只删“界面上看到的那一条”。
+	identifier := strings.TrimSpace(ctx.Query("identifier"))
+	if identifier == "" {
+		ctx.Fail(BadRequest("identifier 必填（同一个方式可能有多条历史凭据, 按方式删会连删）"))
+		return
+	}
 	rows, err := s.engine.AuthMethodsOf(typeName, nodeID)
 	if err != nil {
 		ctx.Fail(CoreError(err))
 		return
 	}
-	removed := 0
+	found := false
 	for _, row := range rows {
-		if row.Method != method {
-			continue
+		if row.Method == method && row.Identifier == identifier {
+			found = true
+			break
 		}
-		err = s.engine.RemoveAuthMethod(ctx.DB(), typeName, row.Method, row.Identifier)
-		if errors.Is(err, core.ErrLastAuthMethod) {
-			// 业务规则, 不是故障: 说清楚为什么拒（4xx, 别回 500）
-			ctx.Fail(BadRequest("这是该账号最后一条登录凭据 —— 删掉他就再也登不进来了" +
-				"（先加一条新的再删这条, 或直接停用这个账号）"))
-			return
-		}
-		if err != nil {
-			ctx.Fail(CoreError(err))
-			return
-		}
-		removed++
 	}
-	if removed == 0 {
-		ctx.Fail(NotFound("该节点没有 %q 方式的凭据", method))
+	if !found {
+		ctx.Fail(NotFound("该节点没有 %q 的凭据 %q", method, identifier))
+		return
+	}
+	err = s.engine.RemoveAuthMethod(ctx.DB(), typeName, method, identifier)
+	if errors.Is(err, core.ErrLastAuthMethod) {
+		// 业务规则, 不是故障: 说清楚为什么拒（4xx, 别回 500）
+		ctx.Fail(BadRequest("这是该账号最后一条登录凭据 —— 删掉他就再也登不进来了" +
+			"（先加一条新的再删这条, 或直接停用这个账号）"))
+		return
+	}
+	if err != nil {
+		ctx.Fail(CoreError(err))
 		return
 	}
 	s.kickSessions(ctx, nodeID)
-	slog.Info("admin: 解绑凭据", "type", typeName, "node", nodeID, "method", method, "removed", removed)
+	slog.Info("admin: 解绑凭据", "type", typeName, "node", nodeID, "method", method, "identifier", identifier)
 	_ = ctx.NoContent(http.StatusNoContent)
 }
 

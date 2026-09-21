@@ -160,10 +160,17 @@ func (s *GCM) AddAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, 
 	})
 }
 
-// SetAuthMethod 设置/替换某节点上一个标识的凭据（"改密码 / 换绑"）。
+// SetAuthMethod 设置某节点上一个**方式**的凭据（“改密码 / 换登录名”）。
 //
-// 与 AddAuthMethod 只差一点: 同 (类型, 方式, 标识) 已存在时**覆盖 data** 而不是
-// 报"已注册"。标识已属于**别的**节点时报错（不许抢别人的登录名）。
+// 语义: **一个账号的同一个方式只有一条** —— 已经绑过 username 就再绑 username,
+// 那是**换掉它**（旧标识一并删掉）, 不是再添一条。
+//
+// 为什么是这个语义（踩过）: 原来按 (类型, 方式, **标识**) upsert ⇒ “改登录名”会**新插**
+// 一条、旧的那条留着 ⇒ 用户以为改名了, 于是旧名字照旧能登录（实测过）, 而凭据面板里
+// 显示两条同方式的凭据。
+//
+// 不同方式仍然可以并存（邮箱 + 手机 + 用户名）—— 那是正常的“多种登录方式”。
+// 标识已属于**别的**节点时报 ErrDuplicate（不许抢别人的登录名）。
 func (s *GCM) SetAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, identifier string, data Fields) error {
 	err := s.checkAuthType(nodeType)
 	if err != nil {
@@ -177,11 +184,20 @@ func (s *GCM) SetAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, 
 		if err != nil {
 			return err
 		}
+		now := nowValue()
+		// ① 同方式、不同标识的行先清掉（含历史遗留的多条）—— 只限**这个账号**。
+		//    先删后插在同一个事务里 ⇒ 中间不存在“这个账号没有该方式”的状态。
+		_, err = tx.Delete("auth_methods",
+			`type = #{1} AND node_id = #{2} AND method = #{3} AND identifier <> #{4}`,
+			nodeType, nodeID, method, identifier).Exec()
+		if err != nil {
+			return err
+		}
+		// ② 标识已存在: 同一个账号 ⇒ 覆盖 data; 别的账号 ⇒ 报冲突（不许抢）。
 		existing, err := s.findAuth(tx, nodeType, method, identifier)
 		if err != nil {
 			return err
 		}
-		now := nowValue()
 		if existing == nil {
 			m := &AuthMethod{
 				NodeType: nodeType, NodeID: nodeID, Method: method, Identifier: identifier,
@@ -192,7 +208,8 @@ func (s *GCM) SetAuthMethod(db *dba.SQL, nodeType string, nodeID int64, method, 
 			return err
 		}
 		if existing.NodeID != nodeID {
-			return fmt.Errorf("core: auth: %s %q belongs to another node", method, identifier)
+			// 与“标识已被别的账号用掉”同一类冲突 ⇒ 归一到 ErrDuplicate, 让上层回 409
+			return fmt.Errorf("%w: auth %s %q", ErrDuplicate, method, identifier)
 		}
 		_, err = tx.Update("auth_methods", dba.H{"data": data, "updated_at": now},
 			`id = #{1}`, existing.ID).Exec()

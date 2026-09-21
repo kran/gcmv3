@@ -15,7 +15,7 @@
             <div v-for="item in methods" :key="item.method + ':' + item.identifier" class="auth-row">
                 <span class="auth-method">{{ item.method }}</span>
                 <span class="auth-identifier">{{ item.identifier }}</span>
-                <el-button link size="small" type="danger" @click="remove(item.method)">解绑</el-button>
+                <el-button link size="small" type="danger" @click="remove(item)">解绑</el-button>
             </div>
         </div>
         <div v-else class="auth-empty">还没有登录凭据（这个人登不进来）</div>
@@ -100,8 +100,8 @@ export default {
                 this.load()
             }).catch((err) => { ElementPlus.ElMessage.error(err.message || '设置失败') })
         },
-        remove(method) {
-            window.$api.authRemove(this.type, this.nodeId, method).then(() => {
+        remove(item) {
+            window.$api.authRemove(this.type, this.nodeId, item.method, item.identifier).then(() => {
                 ElementPlus.ElMessage.success('已解绑')
                 this.load()
             }).catch((err) => { ElementPlus.ElMessage.error(err.message || '解绑失败') })
