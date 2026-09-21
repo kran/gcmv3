@@ -14,16 +14,25 @@
                 <span class="fr-kind">{{ group.spec }}</span>
                 <span class="fr-kind">共 {{ group.total }} 条</span>
             </div>
-            <div v-if="group.nodes.length" class="inbound-list">
-                <div v-for="node in group.nodes" :key="node.id" class="inbound-row">
-                    <span class="inbound-id">#{{ node.id }}</span>
-                    <span v-for="name in group.fields" :key="name" class="inbound-cell">
-                        <component v-if="widgetOf(node, name)" :is="widgetOf(node, name)"
-                                   mode="cell" :model-value="(node.fields || {})[name]"
-                                   :field="fieldOf(node, name)" :defs="defs" :node="node" />
-                    </span>
-                </div>
-            </div>
+            <!-- 表格与内容列表同一套（el-table + 单元格渲染 + 结构/错误兜底）,
+                 只是**没有操作列** —— 入边的所有权在对面, 这里不给增删。 -->
+            <el-table v-if="group.nodes.length" :data="group.nodes" size="small" style="width:100%;">
+                <el-table-column label="ID" width="70">
+                    <template #default="{ row: r }">
+                        <span class="inbound-id">#{{ r.id }}</span>
+                    </template>
+                </el-table-column>
+                <el-table-column v-for="name in group.fields" :key="name" :label="labelOf(group.type, name)"
+                                 min-width="120" show-overflow-tooltip>
+                    <template #default="{ row: r }">
+                        <component v-if="cellOf(group.type, name)" :is="cellOf(group.type, name)"
+                                   mode="cell" :model-value="(r.fields || {})[name]"
+                                   :field="fieldOf(group.type, name)" :defs="defs" :node="r" />
+                        <span v-else-if="isStruct(group.type, name)" class="cell-struct">{{ structSummary(r, name) }}</span>
+                        <span v-else class="cell-error">字段 {{ name }} 没有 kind</span>
+                    </template>
+                </el-table-column>
+            </el-table>
             <div v-else class="inbound-empty">还没有引用它的节点</div>
         </div>
     </div>
@@ -54,15 +63,32 @@ export default {
                 this.groups = res.items || []
             }).catch(() => {})
         },
-        // 单元格渲染: 用 kind 名取组件（与列表页同一套）, 取不到就留空
-        widgetOf(node, name) {
-            const field = this.fieldOf(node, name)
+        // 与内容列表同一套单元格口径（**类型显式传入** —— 每组入边的对方类型不同）:
+        //   fieldOf     列 → 字段定义
+        //   cellOf      kind 名 → 组件（取不到文件由 Widgets 显示错误块）
+        //   isStruct    array/object 是**结构**（没有组件）, 列表里报个规模
+        //   labelOf     表头用字段的中文名（没有就退回字段名）
+        fieldOf(typeName, name) {
+            const def = (this.defs && this.defs[typeName]) || {}
+            return (def.fields || []).find((f) => f.name === name) || null
+        },
+        cellOf(typeName, name) {
+            const field = this.fieldOf(typeName, name)
             return field && window.Widgets ? window.Widgets.resolve(field.kind) : null
         },
-        fieldOf(node, name) {
-            const def = this.defs && this.defs[node.type]
-            const fields = (def && def.fields) || []
-            return fields.find((f) => f.name === name) || null
+        isStruct(typeName, name) {
+            const field = this.fieldOf(typeName, name)
+            return !!field && (field.kind === 'array' || field.kind === 'object')
+        },
+        labelOf(typeName, name) {
+            const field = this.fieldOf(typeName, name)
+            return (field && field.label) || name
+        },
+        structSummary(row, name) {
+            const value = (row.fields || {})[name]
+            if (Array.isArray(value)) return '（' + value.length + ' 项）'
+            if (value && typeof value === 'object') return '（' + Object.keys(value).length + ' 个键）'
+            return '—'
         },
     },
 }
