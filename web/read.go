@@ -15,8 +15,6 @@ package web
 
 import (
 	"errors"
-	"strconv"
-	"strings"
 
 	"github.com/kran/gcmv3/core"
 	"github.com/kran/gcmv3/so"
@@ -31,7 +29,7 @@ import (
 // typeName 是**路由上的类型**（不是"从节点里读出来的"）: 地址是全表唯一的, 拿
 // 别的类型的路由去打一个 id 也不该拿到东西。
 func (c *CmsCtx) Get(typeName string, ref any) (*core.Node, error) {
-	node, err := c.site.engine.GetNode(normalizeRef(ref))
+	node, err := c.site.engine.GetNode(ref)
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
 			return nil, nil
@@ -51,24 +49,6 @@ func (c *CmsCtx) Get(typeName string, ref any) (*core.Node, error) {
 		return nil, err
 	}
 	return c.withFacts(node, rawFields, nil), nil
-}
-
-// normalizeRef 把 ref 规整成引擎认的入参: **数字串当 id**, 其余字符串当地址。
-//
-// 为什么必须在这里做: core 的 GetNode 把**任何字符串**都交给 nodeByAddress ⇒
-// 传 "12" 会去找 address="12" 的节点、然后回"不存在" —— 与上面那句注释承诺的
-// "数字先当 id" 不符（实现与注释不一致, 踩过一次: 评论插件的 target=2 全部 404）。
-// 调用方按文档传, 谁都不用自己 parse。
-func normalizeRef(ref any) any {
-	text, ok := ref.(string)
-	if !ok {
-		return ref
-	}
-	id, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64)
-	if err != nil {
-		return ref
-	}
-	return id
 }
 
 // List 按读规则取一页（limit 0 = 不限）。返回节点与**不受 limit 限制**的总数

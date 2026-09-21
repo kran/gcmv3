@@ -68,6 +68,9 @@ func ValidAddress(s string) bool {
 	if s == "" {
 		return false
 	}
+	// **字母开头是承重的, 不只是好看**: 它让 core.GetNode 能把"数字串"放心当成
+	// id（十进制整数与地址空间不相交, 见 core/node_read.go 的 GetNode）。
+	// 放宽成"不准全是数字"会静默打破那条判定 —— 改之前先看那边。
 	c := s[0]
 	if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') {
 		return false

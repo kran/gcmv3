@@ -351,3 +351,40 @@ func TestReadWhereValidation(t *testing.T) {
 		t.Fatalf("坏字段: %v", err)
 	}
 }
+
+// 数字串与数字同义（URL 路径/模板参数本来就是字符串）, 地址仍按地址查。
+//
+// 这条能成立靠的是不变量"地址必须字母开头"（types.ValidAddress, 而且它挂在 kind
+// 的 Validate 上 ⇒ 引擎写入也要过 ValidateFields）⇒ 十进制整数与地址空间不相交。
+// 断的是**契约**, 不是实现细节: 谁把地址规则放宽了, 这里就该红。
+func TestGetNodeRefIDStringAndAddress(t *testing.T) {
+	gcm, _, _, a1, _, _ := seed(t)
+	want, err := gcm.GetNode(a1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := gcm.GetNode(fmt.Sprintf("%d", a1))
+	if err != nil {
+		t.Fatalf("数字串应当按 id 查: %v", err)
+	}
+	if got.ID != want.ID {
+		t.Fatalf("数字串 %d 应当解析成 id %d, 实际 %d", a1, want.ID, got.ID)
+	}
+	byAddress, err := gcm.GetNode("news")
+	if err != nil {
+		t.Fatalf("地址应当按地址查: %v", err)
+	}
+	if byAddress.Type != "category" || byAddress.Fields.Str("name") != "新闻" {
+		t.Fatalf("地址 news 应当取到分类新闻, 实际 %s/%s",
+			byAddress.Type, byAddress.Fields.Str("name"))
+	}
+	// 未知地址 / 未知 id 的数字串: 都是 ErrNotFound（别把"查不到"变成别的错）
+	_, err = gcm.GetNode("news-missing")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未知地址应当 ErrNotFound, 实际 %v", err)
+	}
+	_, err = gcm.GetNode("999999")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("未知 id 应当 ErrNotFound, 实际 %v", err)
+	}
+}

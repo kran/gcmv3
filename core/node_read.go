@@ -10,6 +10,8 @@ package core
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/kran/dba"
 	gql "github.com/kran/gcmv3/so"
@@ -39,16 +41,28 @@ const (
 
 // GetNode 单个读（Fields 完整: 引用 id 已在其中）。不存在返回 ErrNotFound。
 //
-// 两种定位方式, 都由**数据**决定而不是猜:
+// 三种入参, 都由**数据**决定而不是猜:
 //
-//	数字        → 按 id
-//	字符串      → 按地址（capabilities.addressable 注入的字段; 见存储层的生成列）
+//	数字       → 按 id
+//	数字串     → 按 id（"12" 与 12 同义 —— URL 路径/模板参数天然是字符串）
+//	其它字符串  → 按地址（capabilities.addressable 注入的字段; 见存储层的生成列）
 //
-// 地址空间是全表的（唯一索引不带类型谓词）⇒ 不可能歧义, 所以这里没有
-// "命中两个类型"这条分支。
+// 数字串能放心当 id, 靠的是**地址必须字母开头**这条不变量（types.ValidAddress;
+// 它挂在 kind 的 Validate 上 ⇒ 引擎写入也要过 ValidateFields）⇒ 十进制整数与
+// 地址空间不相交、不可能歧义。
+//
+// 踩过一次: 这里原来把**任何字符串**都当地址查, 于是 web.Get / render 传 "2" 去找
+// address="2"、回"不存在"（评论插件 target=2 全部 404）。
+//
+// 地址空间是全表的（唯一索引不带类型谓词）⇒ 也不会有"命中两个类型"这条分支。
 func (s *GCM) GetNode(ref any) (*Node, error) {
-	if address, ok := ref.(string); ok {
-		return s.nodeByAddress(address)
+	if text, ok := ref.(string); ok {
+		text = strings.TrimSpace(text)
+		id, err := strconv.ParseInt(text, 10, 64)
+		if err == nil {
+			return s.readNode(nil, id)
+		}
+		return s.nodeByAddress(text)
 	}
 	id, err := types.ToID(ref)
 	if err != nil {

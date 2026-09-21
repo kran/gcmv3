@@ -289,7 +289,10 @@ types:
 // slug 约束: 字母开头 / 白名单字符 / 禁止连续 --。
 func TestValidAddress(t *testing.T) {
 	valid := []string{"ai", "ai-industry", "page1", "a_b", "a-1-b", "A-B"}
-	invalid := []string{"", "1abc", "-abc", "_abc", "a--b", "a b", "a/b", "a..b", "a--", "-"}
+	invalid := []string{"", "1abc", "-abc", "_abc", "a--b", "a b", "a/b", "a..b", "a--", "-",
+		// 纯数字: 承重的一例 —— 它保证了 core.GetNode 可以把数字串放心当 id
+		// （整数与地址空间不相交, 见 types/utils.go 的 ValidAddress 注释）。
+		"123", "0"}
 	for _, s := range valid {
 		if !ValidAddress(s) {
 			t.Fatalf("valid slug %q rejected", s)
