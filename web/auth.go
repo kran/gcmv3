@@ -175,7 +175,9 @@ func (s *Site) setupAuth(g *cho.Cho[*CmsCtx]) {
 // authRealms GET /api/auth/realms —— 公开: 列渠道（不含任何凭据信息）。
 func (s *Site) authRealms(ctx *CmsCtx) {
 	realms := s.auth.Realms()
-	_ = ctx.Json(http.StatusOK, map[string]any{"realms": realms})
+	// site 也在这里给: 这是**公开**端点, 而登录页在**登录前**就要显示站点名
+	// （登录响应与 /api/auth/me 里也有 —— 三处一致）。
+	_ = ctx.Json(http.StatusOK, map[string]any{"site": s.name, "realms": realms})
 }
 
 // authMe GET /api/auth/me —— 当前身份 + 掩码后的节点（键名与 /api/nodes/* 一致: node）。

@@ -553,6 +553,24 @@ async function checkRender() {
     // ② NodeEditDialog 里的 display 行（手写）必须与字段行同构
     const NodeEditDialog = await loadComponent('/pages/NodeEditDialog.vue')
 
+    // 后台品牌必须是**站点名**（site.yaml 的 name), 不能硬编码框架名:
+    // 登录前用公开的 /api/auth/realms 的 site, 登录后用 /api/auth/me 的 site。
+    {
+        const appSrc = read(path.join(ADMIN_DIR, 'pages/App.vue'))
+        const htmlSrc = read(path.join(ADMIN_DIR, 'index.html'))
+        const brandSpots = [
+            ['index.html 的 <title>', htmlSrc.match(/<title>[^<]*<\/title>/) || ['']],
+        ]
+        for (const [where, match] of brandSpots) {
+            if (/GCM/.test(String(match[0]))) fail(where + ' 硬编码了品牌名 GCM（该显示站点名）')
+        }
+        // App.vue 里正文（模板）不许出现硬编码的 GCM（注释里说明来源可以）
+        const template = (appSrc.match(/<template>([\s\S]*?)<\/template>/) || [, ''])[1]
+        if (/GCM/.test(template)) fail('App.vue 模板里硬编码了品牌名 GCM（该用 siteLabel）')
+        if (!/siteLabel/.test(appSrc)) fail('App.vue 没有 siteLabel（站点名没接上）')
+        if (!/loginSite\b/.test(appSrc)) fail('App.vue 没从 /api/auth/realms 拿 site（登录前显示不出站点名）')
+    }
+
     // 反向引用块: 与凭据面板同一套路 —— 抽屉里放组件 + 类型守卫在**computed**里
     // （放 methods 就是函数对象 ⇒ v-if 恒真; 读 this.def 会串台）。
     {

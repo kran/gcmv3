@@ -42,6 +42,9 @@ const CASES = [
     // 只在 mounted 里加载 ⇒ 换节点仍然显示第一个节点的凭据
     ['面板随节点刷新闸门', 'render', 'pages/AuthPanel.vue',
         'nodeId() { this.reload() },', 'nodeId() { return 0 },'],
+    // 后台品牌硬编码框架名（站点名显示不出来）
+    ['后台品牌该用站点名闸门', 'render', 'pages/App.vue',
+        '{{ siteLabel }}', 'GCM'],
     // 反向引用块掉进 methods ⇒ v-if 恒真（整个抽屉每次都去查）
     ['inbounds 块必须在 computed 闸门', 'render', 'pages/NodeEditDialog.vue',
         'showsInbounds() {', 'showsInboundsFn() {'],

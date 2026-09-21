@@ -2,14 +2,14 @@
     <!-- 初始化加载 -->
     <div v-if="phase === 'loading'" class="panel-init-loading">
         <div class="panel-init-spinner"></div>
-        <div class="panel-init-text">GCM Admin</div>
+        <div class="panel-init-text">{{ siteLabel }} 后台</div>
     </div>
 
     <!-- 登录 -->
     <div v-else-if="phase === 'login'" class="panel-login-wrapper">
         <div class="panel-login-card">
             <div class="panel-login-logo">
-                <span>GCM</span>
+                <span>{{ siteLabel }}</span>
             </div>
             <div class="panel-login-subtitle">{{ siteName }} · 内容管理</div>
             <el-form @submit.prevent="doLogin" class="panel-login-form">
@@ -36,7 +36,7 @@
         <header class="panel-topbar">
             <div class="topbar-brand">
                 <img src="/admin/ui/logo.svg" class="topbar-logo-img" alt="gcm">
-                <span class="topbar-brand-name">GCM</span>
+                <span class="topbar-brand-name">{{ siteLabel }}</span>
             </div>
             <nav class="topbar-menu">
                 <!-- 内容管理（第一个普通菜单 — 类型树/扩展插后边） -->
@@ -137,8 +137,15 @@ export default {
         var loginForm = reactive({ realm: '', identifier: '', password: '', loading: false, error: '' })
         // 可登录的**类型**从服务端拿（realm 清单）—— 页面不写死任何类型名
         var loginRealms = ref([])
+        var loginSite = ref('') // 登录前从 /api/auth/realms 拿到的站点名
 
-        var siteName = computed(function () { return user.value?.site || '' })
+        // 站点名（site.yaml 的 name）: 登录前用公开的 /api/auth/realms 给的那个,
+        // 登录后用 /api/auth/me 的 —— 两处一致。
+        // siteLabel 给品牌字（登录 logo / 侧栏 / 载入页）, siteName 给登录副标题。
+        var siteName = computed(function () {
+            return user.value?.site || loginSite.value || ''
+        })
+        var siteLabel = computed(function () { return siteName.value || '内容管理' })
 
         var routeViewKey = computed(function () {
             return String(route.name || '') + ':' + JSON.stringify(route.params || {})
@@ -175,6 +182,10 @@ export default {
             try {
                 var res = await $api.loginRealms()
                 loginRealms.value = res.realms || []
+                loginSite.value = res.site || ''
+                if (!document.title || document.title.indexOf('GCM') >= 0) {
+                    document.title = (res.site || '内容管理') + ' · 内容管理'
+                }
                 if (!loginForm.realm && loginRealms.value.length) {
                     // 默认渠道优先（AuthRealm.Default）; 没有就取第一个
                     var preferred = loginRealms.value.find(function (r) { return r['default'] })
@@ -261,7 +272,7 @@ export default {
         })
 
         return {
-            phase: phase, user: user, siteName: siteName, pageTitle: pageTitle, routeViewKey: routeViewKey,
+            phase: phase, user: user, siteName: siteName, siteLabel: siteLabel, pageTitle: pageTitle, routeViewKey: routeViewKey,
             menuData: menuData, menuGroups: menuGroups, 
             mainMenu: mainMenu, mainBefore: mainBefore, mainAfter: mainAfter, panelMenu: panelMenu,
             isPanelActive: isPanelActive,
