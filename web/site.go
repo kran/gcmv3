@@ -234,7 +234,14 @@ func quietLogger(logger *slog.Logger) dba.LogFunc {
 // 一份声明一个名字（site.yaml）—— 不留旧名兜底: 少一个分支, 拼错路径也不会静默用别的东西。
 // 两个解析都开严格模式（KnownFields）⇒ 键名拼错当场报错。
 func loadSite(basedir string) (string, *types.Types, error) {
-	path := filepath.Join(basedir, siteFile)
+	return LoadSiteFile(filepath.Join(basedir, siteFile))
+}
+
+// LoadSiteFile 读一份站点声明（name + types）。
+//
+// 导出是给**站点根目录之外的调用方**用的（例如迁移工具、一次性脚本）—— 校验口径
+// 与起站完全一致, 不复制第二份解析。
+func LoadSiteFile(path string) (string, *types.Types, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return "", nil, fmt.Errorf("web: 读站点声明 %s: %w（站点根目录下必须有它）", siteFile, err)
