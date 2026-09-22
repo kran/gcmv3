@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -31,7 +32,18 @@ func TestSearchPerformance(t *testing.T) {
 		t.Skip("设 SEARCH_BENCH=1 才跑（会插入几千条数据）")
 	}
 	texts := benchTexts()
-	for _, total := range []int{1000, 5000, 20000} {
+	sizes := []int{1000, 5000, 20000}
+	if raw := os.Getenv("SEARCH_BENCH_SIZES"); raw != "" {
+		sizes = nil
+		for _, part := range strings.Split(raw, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil || n <= 0 {
+				t.Fatalf("SEARCH_BENCH_SIZES 里有非法值: %q", part)
+			}
+			sizes = append(sizes, n)
+		}
+	}
+	for _, total := range sizes {
 		runSearchPerf(t, total, texts)
 	}
 }
