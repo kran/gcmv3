@@ -58,24 +58,27 @@ func (p *Plugin) handle(ctx *web.CmsCtx) {
 		return
 	}
 
-	pairs, hasMore, err := p.collect(ctx, query, typeName, cursor, size)
+	pairs, hasMore, next, err := p.collect(ctx, query, typeName, cursor, size)
 	if err != nil {
 		ctx.Fail(err)
 		return
 	}
 	items := make([]*core.Node, 0, len(pairs))
+	// matched: 这页里有没有"用户输入的连续短语"的命中 —— 前端据此提示
+	// "未找到完全匹配, 以下按相关度排序"。只按**看得见的**算（否则提示会骗人）。
+	matched := "any"
 	for _, item := range pairs {
 		items = append(items, item.Node)
+		if item.Phrase {
+			matched = "phrase"
+		}
 	}
 
 	payload := map[string]any{
 		"items": items, "has_more": hasMore, "size": size, "q": query, "type": typeName,
+		"matched": matched,
 	}
-	if hasMore && len(pairs) > 0 {
-		// 游标 = **最后一条返回的**命中（不是最后扫描的）: 窗口里没返回的那些下一轮
-		// 会重新扫到, 但不会漏（不可见的会被再丢一次, 代价有界）。
-		last := pairs[len(pairs)-1].Hit
-		next := Cursor{Query: query, Type: typeName, Rank: last.Rank, RowID: last.RowID}
+	if next != nil && hasMore && len(pairs) > 0 {
 		payload["next_cursor"] = next.encode()
 	}
 	_ = ctx.Json(http.StatusOK, payload)
@@ -85,53 +88,62 @@ func (p *Plugin) handle(ctx *web.CmsCtx) {
 //
 // 返回**至多 size 条**可见结果（相关度序）+ "FTS 侧还有没有更多"。
 // 不可见的命中会被消费掉（游标越过它）—— 否则它们一直占着窗口, 每页都凑不满。
-func (p *Plugin) collect(ctx *web.CmsCtx, query, typeName string, cursor *Cursor, size int) ([]pair, bool, error) {
+func (p *Plugin) collect(ctx *web.CmsCtx, query, typeName string, cursor *Cursor, size int) ([]pair, bool, *Cursor, error) {
 	db := ctx.DB()
 	want := size*3 + 10 // 一窗多取一点: 不可见的命中不必再来一轮
+	offset := 0
+	if cursor != nil {
+		offset = cursor.Offset
+	}
 	out := make([]pair, 0, size)
+	nextOffset := offset
 	for round := 0; round < roundLimit; round++ {
-		hits, more, err := p.searchHits(db, query, typeName, cursor, want)
+		// 每一轮都**从头重算**这个序（融合是确定的 ⇒ 同样的输入同样的顺序）, 只是窗口加大。
+		// offset 之前的部分直接跳过; 上一轮消费掉的不可见命中会重新扫到、再被丢一次
+		//（代价有界 —— 这正是 roundLimit 存在的理由）。
+		window := offset + want*(round+1)
+		ranked, more, err := p.searchRanked(db, query, typeName, window)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
-		if len(hits) == 0 {
-			return out, false, nil
+		if offset >= len(ranked) {
+			return out, false, nil, nil
+		}
+		tail := ranked[offset:]
+		hits := make([]hit, 0, len(tail))
+		for _, entry := range tail {
+			hits = append(hits, entry.hit)
 		}
 		nodes, err := p.loadVisible(ctx, hits)
 		if err != nil {
-			return nil, false, err
+			return nil, false, nil, err
 		}
 		visible := make(map[int64]*core.Node, len(nodes))
 		for _, node := range nodes {
 			visible[node.ID] = node
 		}
 		lastReturned := -1
-		for index, h := range hits {
-			cursor = &Cursor{Query: query, Type: typeName, Rank: h.Rank, RowID: h.RowID}
-			node, ok := visible[h.ID]
+		for index, entry := range tail {
+			node, ok := visible[entry.hit.ID]
 			if !ok {
 				continue // 不可见: 消费掉, 不返回
 			}
 			if len(out) < size {
-				out = append(out, pair{Hit: h, Node: node})
+				out = append(out, pair{Hit: entry.hit, Node: node, Phrase: entry.Phrase})
 				lastReturned = index
 			}
 		}
+		nextOffset = offset + lastReturned + 1
 		if len(out) >= size {
-			// 够一页了: 游标退回到**最后一条返回的**（窗口里排在它后面的可见结果
-			// 下一轮还会扫到 —— 不能越过, 否则漏数据）
-			if lastReturned >= 0 {
-				last := hits[lastReturned]
-				cursor = &Cursor{Query: query, Type: typeName, Rank: last.Rank, RowID: last.RowID}
-			}
-			hasMore := true
-			return out, hasMore, nil
+			// 够一页了: 游标停在**最后一条返回的**后面 —— 排在它后面、这轮没返回的
+			// 下一轮还会扫到（不能越过, 否则漏数据）
+			return out, true, &Cursor{Query: query, Type: typeName, Offset: nextOffset}, nil
 		}
 		if !more {
-			return out, false, nil
+			return out, false, nil, nil
 		}
 	}
-	return out, true, nil
+	return out, true, &Cursor{Query: query, Type: typeName, Offset: nextOffset}, nil
 }
 
 // pageSize 解析 size（默认 DefaultSize, 上限 MaxSize —— 上限是给"客户端参数"用的,

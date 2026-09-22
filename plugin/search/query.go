@@ -4,6 +4,7 @@ package search
 import (
 	"encoding/base64"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -13,20 +14,23 @@ import (
 	"github.com/kran/gcmv3/web"
 )
 
-// Cursor 翻页游标: 相关度 + rowid（FTS5 的 rank 可以在 WHERE 里比较）。
+// Cursor 翻页游标: **偏移**（不是 (rank, rowid)）。
+//
+// 为什么变了: 现在每一次查询都要把「短语列表 + OR 列表」重新融合一遍, 融合后的序是
+// **确定**的（同样的输入 ⇒ 同样的序）⇒ 用"窗口大小 + 偏移"就能稳定翻页。bm25 的
+// (rank,rowid) 在融合之后不再描述顺序了。
 //
 // 带上 q/type: 换了关键词还用旧游标 ⇒ 直接报错（"翻到一半换了搜索词"是 bug,
 // 不是"从头再来"——静默接受会给出看不懂的结果）。
 type Cursor struct {
-	Query string
-	Type  string
-	Rank  float64
-	RowID int64
+	Query  string
+	Type   string
+	Offset int
 }
 
 // encode 游标 → 不透明串（客户端只负责带回来）。
 func (c Cursor) encode() string {
-	raw := fmt.Sprintf("1\x00%s\x00%s\x00%s\x00%d", c.Query, c.Type, strconv.FormatFloat(c.Rank, 'g', 17, 64), c.RowID)
+	raw := fmt.Sprintf("2\x00%s\x00%s\x00%d", c.Query, c.Type, c.Offset)
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
@@ -40,18 +44,15 @@ func decodeCursor(raw string) (*Cursor, error) {
 		return nil, fmt.Errorf("游标不合法")
 	}
 	parts := strings.Split(string(decoded), "\x00")
-	if len(parts) != 5 || parts[0] != "1" {
+	// 版本 2 = 偏移游标（版本 1 是 (rank,rowid) —— 语义变了就不认旧的, 宁可报错）
+	if len(parts) != 4 || parts[0] != "2" {
 		return nil, fmt.Errorf("游标不合法")
 	}
-	rank, err := strconv.ParseFloat(parts[3], 64)
-	if err != nil {
+	offset, err := strconv.Atoi(parts[3])
+	if err != nil || offset < 0 {
 		return nil, fmt.Errorf("游标不合法")
 	}
-	rowID, err := strconv.ParseInt(parts[4], 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("游标不合法")
-	}
-	return &Cursor{Query: parts[1], Type: parts[2], Rank: rank, RowID: rowID}, nil
+	return &Cursor{Query: parts[1], Type: parts[2], Offset: offset}, nil
 }
 
 // hit 一条命中（id + 类型 + 相关度）。
@@ -64,46 +65,24 @@ type hit struct {
 
 // pair 命中 + 回读到的节点（相关度序）。
 type pair struct {
-	Hit  hit
-	Node *core.Node
+	Hit    hit
+	Node   *core.Node
+	Phrase bool // 命中里包含用户输入的**连续短语**（前端据此提示"完全匹配"）
 }
 
-// searchHits 取一页命中 id（相关度序）。cursor 为空 = 第一页。
+// ftsTop 取相关度最高的 want 条命中（不要游标: 融合需要的是"从头开始的排名"）。
 //
-// want 是"想要的条数"（调用方会多要一点 —— 回读时有些节点对当前身份不可见）。
-// more 表示 FTS 侧游标之后还有命中（可能都不可见 —— 那是读规则的事）。
-func (p *Plugin) searchHits(db *dba.SQL, query, typeName string, cursor *Cursor, want int) ([]hit, bool, error) {
-	bq := bigram(strings.TrimSpace(query))
-	if bq == "" {
-		return nil, false, fmt.Errorf("请输入搜索关键词")
-	}
-	match, found, err := p.resolveMatch(db, bq)
-	if err != nil {
-		return nil, false, err
-	}
-	if !found {
-		// 一个词元都不在语料里 ⇒ 命中为空（这不是错误: 搜不到很正常）
-		return nil, false, nil
-	}
-
-	// 类型过滤直接进 FTS 查询（type 是过滤列, bm25 权重 0）——
-	// 不靠回读去筛: 否则每页的有效条数会被别的类型挤掉。
-	sql := `SELECT rowid, type, rank FROM search_fts
-		WHERE search_fts MATCH #{1}`
+// 类型过滤直接进 FTS 查询（type 是过滤列, bm25 权重 0）—— 不靠回读去筛:
+// 否则每页的有效条数会被别的类型挤掉。
+func (p *Plugin) ftsTop(db *dba.SQL, match, typeName string, want int) ([]hit, bool, error) {
+	sql := `SELECT rowid, type, rank FROM search_fts WHERE search_fts MATCH #{1}`
 	args := []any{match}
 	if typeName != "" {
 		sql += ` AND type = #{2}`
 		args = append(args, typeName)
 	}
-	if cursor != nil {
-		// (rank, rowid) 游标: 严格大于, 同 rank 用 rowid 破平 —— 实测与 OFFSET 分页
-		// 拼接结果完全一致（见 plugin 文档; rowid 唯一 ⇒ 不会重复也不会漏）
-		sql += fmt.Sprintf(` AND (rank > #{%d} OR (rank = #{%d} AND rowid > #{%d}))`,
-			len(args)+1, len(args)+1, len(args)+2)
-		args = append(args, cursor.Rank, cursor.RowID)
-	}
 	sql += fmt.Sprintf(` ORDER BY rank, rowid LIMIT #{%d}`, len(args)+1)
-	args = append(args, want+1) // 多取一条: 判断还有没有下一页
+	args = append(args, want+1) // 多取一条: 判断还有没有更多
 
 	rows, err := db.Add(sql, args...).FetchMaps()
 	if err != nil {
@@ -125,42 +104,82 @@ func (p *Plugin) searchHits(db *dba.SQL, query, typeName string, cursor *Cursor,
 	return hits, more, nil
 }
 
-// resolveMatch 三级放宽（与 v2 同口径）:
+// rrfK RRF 的常数（Cormack 等 2009 的 60）: 把"排名差"压得很小, 靠多路叠加取胜。
+// 好处是对两路的**量纲不敏感** —— 不必把 bm25 归一化到 0~1（那是调参无底洞）。
+const rrfK = 60
+
+// rankedHit 融合后的一条: 命中 + 分数 + 来自哪几路。
+type rankedHit struct {
+	hit
+	Phrase bool
+	Score  float64
+}
+
+// searchRanked 一次查询的**排序结果**: 不再"选一级"（三级放宽）, 而是
 //
-//  1. 整个查询当**一个短语**: 连续 bigram = 原文子串 ⇒ 精确、相关度最高
-//  2. 丢掉语料里不存在的词元后 AND: "农业著名" → 农业 AND 著名
-//  3. 还不行就 OR: 至少把沾边的捞回来（相关度排序会把最像的排前面）
+//	① 语料里存在的词元全部 OR 起来 → FTS5 按 bm25 排序（这就是"匹配度"）
+//	② 整句作为**短语**再跑一路（连续 bigram = 原文子串 ⇒ 命中即强信号）
+//	③ 两路用 RRF 融合（1/(k+排名) 相加）⇒ 短语命中的提前
 //
-// 返回 (match 表达式, 有没有命中, err)。found 为假 = 索引里确实没有 ⇒ 调用方直接
-// 回空结果（不要编一个"保证不匹配"的表达式去骗 SQLite —— 那是自找语法麻烦）。
-func (p *Plugin) resolveMatch(db *dba.SQL, bq string) (string, bool, error) {
-	phrase := ftsPhrase(bq)
-	found, err := p.matchExists(db, phrase)
-	if err != nil {
-		return "", false, err
-	}
-	if found {
-		return phrase, true, nil
+// 为什么这是对的: 搜索不是"筛选", 是"打分"。给了十个词, 命中八成的该排在命中两成的
+// 前面, 而不是"非得全中才算命中"。语料里不存在的词元直接丢（用户多打一个字不该把
+// 结果清零）—— 这一条是从原来的第二级里保留下来的, 但它不再是"一级", 只是构造 OR 时
+// 的清理。
+func (p *Plugin) searchRanked(db *dba.SQL, query, typeName string, window int) ([]rankedHit, bool, error) {
+	bq := bigram(strings.TrimSpace(query))
+	if bq == "" {
+		return nil, false, fmt.Errorf("请输入搜索关键词")
 	}
 	present, err := p.presentTokens(db, bq)
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
 	if len(present) == 0 {
-		return "", false, nil
+		// 一个词元都不在语料里 ⇒ 命中为空（搜不到很正常, 不是错误）
+		return nil, false, nil
 	}
-	if len(present) == 1 {
-		return present[0], true, nil
-	}
-	and := strings.Join(present, " AND ")
-	found, err = p.matchExists(db, and)
+
+	orHits, orMore, err := p.ftsTop(db, strings.Join(present, " OR "), typeName, window)
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
-	if found {
-		return and, true, nil
+	phraseHits, phraseMore, err := p.ftsTop(db, ftsPhrase(bq), typeName, window)
+	if err != nil {
+		return nil, false, err
 	}
-	return strings.Join(present, " OR "), true, nil
+
+	merged := map[int64]*rankedHit{}
+	order := make([]int64, 0, len(orHits)+len(phraseHits))
+	add := func(hits []hit, isPhrase bool) {
+		for index, one := range hits {
+			entry, ok := merged[one.ID]
+			if !ok {
+				entry = &rankedHit{hit: one}
+				merged[one.ID] = entry
+				order = append(order, one.ID)
+			}
+			entry.Score += 1 / float64(rrfK+index+1)
+			if isPhrase {
+				entry.Phrase = true
+				// 短语那一等第已经在上面加过了（两路权重相等 —— 教科书 RRF）。
+				// 想让短语更强势就再给一路加成, 这里刻意留白: 先看真实效果再调。
+			}
+		}
+	}
+	add(orHits, false)
+	add(phraseHits, true)
+
+	out := make([]rankedHit, 0, len(order))
+	for _, id := range order {
+		out = append(out, *merged[id])
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
+		}
+		return out[i].RowID < out[j].RowID // 破平: rowid 保证稳定（可重算的序）
+	})
+	return out, orMore || phraseMore, nil
 }
 
 // matchExists 这个 MATCH 表达式在索引里有没有命中（词元探针 —— 判断的是

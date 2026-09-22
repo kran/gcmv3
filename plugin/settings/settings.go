@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -373,10 +374,8 @@ func normalize(item Item, value any) (any, error) {
 		if !ok {
 			return nil, fmt.Errorf("settings: %q 要字符串, 收到 %T", item.Key, value)
 		}
-		for _, allowed := range item.Options {
-			if text == allowed {
-				return text, nil
-			}
+		if slices.Contains(item.Options, text) {
+			return text, nil
 		}
 		return nil, fmt.Errorf("settings: %q 只能是 %s 之一, 收到 %q",
 			item.Key, strings.Join(item.Options, " / "), text)

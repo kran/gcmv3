@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -109,7 +110,8 @@ func (h *harness) search(t *testing.T, params map[string]string) map[string]any 
 		if query != "" {
 			query += "&"
 		}
-		query += key + "=" + value
+		// 必须转义: "新能源 产业 会员" 这种多词查询带空格, 直接拼会把请求行拼坏
+		query += key + "=" + url.QueryEscape(value)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/api/search?"+query, nil)
 	request.Header.Set("Authorization", "Bearer "+h.token)
@@ -362,3 +364,53 @@ func TestRebuild(t *testing.T) {
 }
 
 func ptr(v int64) *int64 { return &v }
+
+// 给一大串词: **命中越多的排越前** —— 这是"搜索引擎式"的核心（不再要求全部命中）。
+//
+// 老行为是"三级放宽": 先整句短语、再 AND、再 OR —— 每次只**选一级**当过滤条件,
+// 于是"命中 8 成"和"命中 2 成"在结果里没有区别（甚至 AND 级直接把少命中的全滤掉）。
+func TestRankedByCoverage(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.create(t, "article", core.Fields{"name": "新能源产业对接会", "body": "新能源 产业 对接 会员 企业"})
+	h.create(t, "article", core.Fields{"name": "新能源政策", "body": "新能源 补贴 政策"})
+	h.create(t, "article", core.Fields{"name": "会员走访", "body": "会员 企业 走访"})
+
+	payload := h.search(t, map[string]string{"q": "新能源 产业 会员"})
+	got := titles(t, payload)
+	// 三篇都该出现（OR 是候选集），但顺序按命中度: 全中的那篇第一
+	if len(got) != 3 {
+		t.Fatalf("三篇都该被捞回来（OR 候选集）, 实际 %#v", got)
+	}
+	if got[0] != "新能源产业对接会" {
+		t.Fatalf("命中三个词的那篇该排第一, 实际 %#v", got)
+	}
+	if matched, _ := payload["matched"].(string); matched != "any" {
+		t.Fatalf("没有连续短语命中时 matched 该是 any, 实际 %q", matched)
+	}
+}
+
+// 语料里不存在的词元不该把结果清零（老第二级的能力, 保留）。
+func TestUnknownTokenDoesNotEmptyResults(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.create(t, "article", core.Fields{"name": "商会动态", "body": "商会 新闻"})
+	payload := h.search(t, map[string]string{"q": "商会 这个词肯定不存在zz"})
+	if got := titles(t, payload); len(got) != 1 || got[0] != "商会动态" {
+		t.Fatalf("多余的不存在词元不该清空结果, 实际 %#v", got)
+	}
+}
+
+// 整句连续命中（短语）该排在最前, 并让响应标出 matched=phrase。
+func TestPhraseRanksFirstAndFlagsMatched(t *testing.T) {
+	h := newHarness(t, Options{})
+	h.create(t, "article", core.Fields{"name": "商会章程", "body": "本会章程规定会员权利与义务"})
+	h.create(t, "article", core.Fields{"name": "会员活动通知", "body": "商会 会员 活动 通知 公告"})
+
+	payload := h.search(t, map[string]string{"q": "商会章程"})
+	got := titles(t, payload)
+	if len(got) == 0 || got[0] != "商会章程" {
+		t.Fatalf("含连续短语的那篇该排第一, 实际 %#v", got)
+	}
+	if matched, _ := payload["matched"].(string); matched != "phrase" {
+		t.Fatalf("有短语命中时 matched 该是 phrase, 实际 %q", matched)
+	}
+}

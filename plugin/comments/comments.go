@@ -271,10 +271,7 @@ func (p *Plugin) list(ctx *web.CmsCtx) {
 		return
 	}
 	page := positive(ctx.Query("page"), 1)
-	size := positive(ctx.Query("size"), p.opts.PageSize)
-	if size > MaxPageSize {
-		size = MaxPageSize
-	}
+	size := min(positive(ctx.Query("size"), p.opts.PageSize), MaxPageSize)
 	where := so.P("in", "->"+p.opts.TargetField, []any{target.ID})
 	nodes, total, err := ctx.List(core.NodeQuery{Type: p.opts.Type, Where: where, Sort: p.newestFirst()}, size, (page-1)*size)
 	if err != nil {
