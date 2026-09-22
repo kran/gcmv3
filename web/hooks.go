@@ -17,6 +17,10 @@ const (
 
 	// HookServeFile 服务 /static 与 /uploads 的文件: 插件可以改路径（图片处理、
 	// 私有文件鉴权等）。签名: func(*CmsCtx, *string) error
+	//
+	// handler **自己应答了**（重定向到 CDN、直接输出内容/错误体）就把 *path 置为空串:
+	// serveFiles 见空路径即返回, 不再 ServeFile 一遍 —— 否则已经写出去的响应后面会被
+	// 追加整个文件的内容。
 	HookServeFile = "web.serve_file"
 
 	// HookUpload 上传策略 —— 站点/插件声明"谁能传、能传什么、多大、落哪"。

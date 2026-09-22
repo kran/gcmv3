@@ -14,10 +14,17 @@
 // 旧的 `?w=&h=&mode=&fmt=` 写法**已移除**: 传了就报错（静默忽略参数比报错更难查 ——
 // 页面看着正常, 图就是没处理）。
 //
-// BaseURL: 配了就把图片交给外部存储（OSS/CDN）—— 本插件**不处理**（远端那套
-// 参数自己会生效）, URL 由 URL() 拼。空 = 本地处理并缓存到同目录 .cache/。
+// 两种部署形态（只差一个配置）:
 //
-// 三条"软失败"（都是原图直出, 不让一张图把页面搞崩）:
+//	空         本地处理: 按参数解码/缩放, 缓存到同目录 .cache/ 后直出
+//	配 BaseURL 交给外部存储（OSS/CDN）: URL 由 URL() 拼上桶前缀,
+//	           打到本站的带参数请求 **302 到桶**（见 redirectToBase）
+//
+// 302 这条不是多余: 页面 URL 是 URL() 拼的, 正常情况下不会打到本站 —— 但换配置之前
+// 写进 DB 的正文、旧缓存页面、手写的相对路径都会打到本站, 静默原图直出正是最难查的
+// 那类"参数不生效"。
+//
+// 三条"软失败"（都是原图直出, 不让一张图把页面搞崩）—— 只适用于**本地处理**:
 //
 //	原文件不存在 / 格式不支持（webp、avif 之类 imaging 不认）/ 处理或编码失败
 //
@@ -30,12 +37,14 @@ import (
 	"image"
 	"log/slog"
 	"net/http"
+	"net/url"
 
-	"golang.org/x/net/html"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"golang.org/x/net/html"
 
 	"github.com/disintegration/imaging"
 
@@ -46,7 +55,8 @@ import (
 // Options 插件配置。
 type Options struct {
 	// BaseURL 图片的外部存储前缀（OSS/CDN, 如 "https://bucket.oss-cn-shenzhen.aliyuncs.com"）。
-	// 配了 ⇒ 本地不处理（远端处理）, URL 由 URL() 拼; 空 ⇒ 本地处理。
+	// 配了 ⇒ 本地不解码（远端处理）: URL() 拼上前缀, 本站的带参数请求 302 到桶;
+	// 空 ⇒ 本地处理。
 	BaseURL string
 }
 
@@ -59,7 +69,7 @@ const contentImageWidth = 1200
 // ⇒ viicn 的页面用上 lizhiqi 的桶（图片全 404）。**站点相关的东西不能放包级**。
 type Plugin struct{ baseURL string }
 
-// Mount 装上插件（注册 HookServeFile —— 图片处理），返回实例供 URL() 用。
+// Mount 装上插件（注册 HookServeFile —— 图片处理/转发），返回实例供 URL() 用。
 //
 // 装上之后的用法（站点侧）:
 //
@@ -69,11 +79,9 @@ func Mount(s *web.Site, options Options) *Plugin {
 	base := strings.TrimRight(strings.TrimSpace(options.BaseURL), "/")
 	instance := &Plugin{baseURL: base}
 	instance.registerTemplateFuncs(s)
-	if base != "" {
-		// 交给远端: 本地不做任何处理（远端按同一套 x-oss-process 参数处理）
-		return instance
-	}
-	s.Hook(web.HookServeFile, ServeFile)
+	// 两种模式都挂: 本地模式处理图片, OSS 模式把带参数的请求转给桶
+	// （配了 BaseURL 就**不挂** hook 的话, 打到本站的 ?x-oss-process= 会被静默丢掉）
+	s.Hook(web.HookServeFile, instance.serveFile)
 	return instance
 }
 
@@ -262,8 +270,14 @@ func ProcessQuery(width, height int, mode string) string {
 // maxImgDim 单边最大像素// maxImgDim 单边最大像素（防"用参数让人去解码一张 40000×40000 的图"）。
 const maxImgDim = 4000
 
-// ServeFile HookServeFile 的处理器。
-func ServeFile(ctx *web.CmsCtx, filePath *string) error {
+// serveFile HookServeFile 的处理器。
+//
+//	没配 BaseURL —— 本地处理（解码/缩放/缓存）
+//	配了 BaseURL —— 带参数就 302 到桶, 本地一个字节都不解码
+func (p *Plugin) serveFile(ctx *web.CmsCtx, filePath *string) error {
+	if p.baseURL != "" {
+		return p.redirectToBase(ctx, filePath)
+	}
 	params, ok, err := parseParams(ctx.R)
 	if err != nil {
 		// 不写响应 —— serveFiles 是统一的错误出口（这里写了会双写）。
@@ -297,6 +311,39 @@ func ServeFile(ctx *web.CmsCtx, filePath *string) error {
 		return nil
 	}
 	*filePath = cachePath
+	return nil
+}
+
+// redirectToBase 把带处理参数的本地请求 302 给桶。
+//
+// 为什么配了 BaseURL 还要管本地请求: URL() 拼出来的地址本来就指向桶; 但**换配置之前**
+// 写进 DB 的正文、旧缓存页面、站长/小程序手写的相对路径都会打到本站 —— 那些请求带着
+// x-oss-process 却没人处理, 图就悄悄是原图（本插件自己反复踩的就是这种静默降级）。
+// 本地没有这个能力, 有能力的是远端 ⇒ 参数原样交过去。
+//
+// 三处刻意的取舍:
+//
+//  1. **只在带参数时重定向**。不带参数的请求本地有文件就直出 —— uploads 是本地落盘的,
+//     桶里可能还没同步, 重定向过去反而成了 404（把能用的行为改坏了）。
+//  2. **302 不是 301**: 桶/CDN 换前缀是常态, 301 会被浏览器永久记住。
+//  3. **参数不在这里校验**（除了本站自己的旧参数名）: 远端认的 process 比我们多
+//     （image/format,webp 之类）, 拿本地白名单去卡它等于把远端能处理的请求判成 400。
+func (p *Plugin) redirectToBase(ctx *web.CmsCtx, filePath *string) error {
+	query := ctx.R.URL.Query()
+	err := rejectLegacy(query)
+	if err != nil {
+		// 旧参数名是**本站的**约定错, 远端也不认识它（会当没看见 ⇒ 又是静默）—— 自己报
+		return web.BadRequest("图片参数不合法: %s", err.Error())
+	}
+	if strings.TrimSpace(query.Get("x-oss-process")) == "" {
+		return nil // 没带处理参数: 本地原图直出
+	}
+	target := p.baseURL + ctx.R.URL.Path
+	if ctx.R.URL.RawQuery != "" {
+		target += "?" + ctx.R.URL.RawQuery
+	}
+	ctx.Redirect(http.StatusFound, target)
+	*filePath = "" // 已经应答 ⇒ 约定: serveFiles 见空路径即返回（否则文件内容会被追加到 302 后面）
 	return nil
 }
 
@@ -348,15 +395,24 @@ type params struct {
 	mode          string // lfit | fill
 }
 
+// rejectLegacy 旧参数名**响亮报错**（静默忽略 = 页面看着正常、图就是没处理, 最难查）。
+// 本地与 OSS 两种模式都要查: 远端同样不认识 ?w=, 只会当没看见。
+func rejectLegacy(q url.Values) error {
+	for _, legacy := range []string{"w", "h", "mode", "fmt"} {
+		if q.Get(legacy) != "" {
+			return fmt.Errorf(
+				"旧参数 ?%s= 已移除 —— 请用 ?x-oss-process=image/resize,w_300,h_200,m_lfit|m_fill", legacy)
+		}
+	}
+	return nil
+}
+
 // parseParams 解析查询串。三态: (p, true) 要处理 / (p, false) 没带参数 / err 参数非法。
 func parseParams(r *http.Request) (params, bool, error) {
 	q := r.URL.Query()
-	// 旧参数名**响亮报错**（静默忽略 = 页面看着正常、图就是没处理, 最难查）
-	for _, legacy := range []string{"w", "h", "mode", "fmt"} {
-		if q.Get(legacy) != "" {
-			return params{}, false, fmt.Errorf(
-				"旧参数 ?%s= 已移除 —— 请用 ?x-oss-process=image/resize,w_300,h_200,m_lfit|m_fill", legacy)
-		}
+	err := rejectLegacy(q)
+	if err != nil {
+		return params{}, false, err
 	}
 	process := strings.TrimSpace(q.Get("x-oss-process"))
 	if process == "" {

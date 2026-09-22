@@ -21,6 +21,21 @@ import (
 // 测试自己造目录, 所以自己留着路径。
 func newSite(t *testing.T) (*web.Site, string) {
 	t.Helper()
+	return newSiteWith(t, Options{})
+}
+
+// newSiteWith 同上, 但插件配置可选（测 OSS 模式要 BaseURL）。
+func newSiteWith(t *testing.T, options Options) (*web.Site, string) {
+	t.Helper()
+	site, basedir := openSite(t)
+	Mount(site, options)
+	site.Setup() // 建 static/uploads 目录
+	return site, basedir
+}
+
+// openSite 只建站点（不挂插件、不 Setup）—— 要拿 Mount 返回的插件实例的测试用。
+func openSite(t *testing.T) (*web.Site, string) {
+	t.Helper()
 	basedir := t.TempDir()
 	err := os.WriteFile(filepath.Join(basedir, "site.yaml"), []byte(`
 types:
@@ -36,8 +51,6 @@ types:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = site.Close() })
-	Mount(site, Options{})
-	site.Setup() // 建 static/uploads 目录
 	return site, basedir
 }
 
@@ -246,25 +259,76 @@ func TestURLBuilder(t *testing.T) {
 	}
 }
 
-// 配了 BaseURL ⇒ 本地不挂 hook（交给远端处理）, URL() 带上前缀。
+// 配了 BaseURL ⇒ 本地的带参数请求 302 到桶（URL() 带上前缀）; 不带参数的仍原图直出。
 //
 // 顺带钉住"多站不串桶": 两个实例各自带自己的前缀（以前是包级全局 ⇒ 后者覆盖前者）。
-func TestBaseURLSkipsLocalProcessing(t *testing.T) {
-	site, _ := newSite(t)
+func TestBaseURLRedirectsToBucket(t *testing.T) {
+	site, basedir := openSite(t)
 	images := Mount(site, Options{BaseURL: "https://bucket.example.com/"})
+	site.Setup()
 	if got := images.URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
 		"https://bucket.example.com/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
 		t.Fatalf("配了 BaseURL 的 URL() = %q", got)
 	}
-	// 第二个实例（另一个站点）不能影响第一个 —— 这就是当初包级全局串桶的根因
-	other, _ := newSite(t)
-	second := Mount(other, Options{BaseURL: "https://other.example.com/"})
-	if got := second.URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
-		"https://other.example.com/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
-		t.Fatalf("第二站 URL() = %q", got)
+	url := writePNG(t, basedir, "oss.png", 120, 60)
+	// ① 带参数 ⇒ 302 到桶, 参数原样（本地不解码、不落缓存）
+	got := fetch(t, site, url+"?x-oss-process=image/resize,w_60,m_lfit")
+	want := "https://bucket.example.com" + url + "?x-oss-process=image/resize,w_60,m_lfit"
+	if got.Code != http.StatusFound || got.Header().Get("Location") != want {
+		t.Fatalf("重定向 = %d %q, 期望 302 %q", got.Code, got.Header().Get("Location"), want)
 	}
-	if got := images.URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
-		"https://bucket.example.com/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
-		t.Fatalf("第二站挂载后第一站被串了: %q", got)
+	// 已经应答 ⇒ 后面**不能**再跟文件内容（serveFiles 的空路径约定）
+	if strings.Contains(got.Body.String(), "PNG") {
+		t.Fatalf("302 响应体里带了文件内容（%d 字节）", got.Body.Len())
+	}
+	if _, err := os.Stat(filepath.Join(basedir, "uploads", ".cache")); !os.IsNotExist(err) {
+		t.Fatal("OSS 模式不该在本地落缓存")
+	}
+	// ② 不带参数 ⇒ 本地原图直出（一律重定向会把"桶里还没同步"的图变成 404）
+	plain := fetch(t, site, url)
+	if plain.Code != http.StatusOK {
+		t.Fatalf("不带参数 = %d（该直出本地文件）", plain.Code)
+	}
+	img, err := png.Decode(bytes.NewReader(plain.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("原图解不开: %v", err)
+	}
+	if img.Bounds().Dx() != 120 || img.Bounds().Dy() != 60 {
+		t.Fatalf("原图尺寸被改了: %v", img.Bounds())
+	}
+	// ③ 旧参数名仍然响亮报错（远端也不认识它 ⇒ 交给远端就等于静默）
+	legacy := fetch(t, site, url+"?w=60")
+	if legacy.Code != http.StatusBadRequest {
+		t.Fatalf("旧参数在 OSS 模式下 = %d（该 400）", legacy.Code)
+	}
+}
+
+// 两个实例（两个站点）各带自己的桶 —— 以前是包级全局 ⇒ 后者覆盖前者（viicn 用上 lizhiqi 的桶）。
+func TestBaseURLPerSite(t *testing.T) {
+	firstSite, _ := openSite(t)
+	first := Mount(firstSite, Options{BaseURL: "https://bucket.example.com/"})
+	firstSite.Setup()
+	secondSite, _ := openSite(t)
+	second := Mount(secondSite, Options{BaseURL: "https://other.example.com/"})
+	secondSite.Setup()
+	for _, test := range []struct {
+		site *web.Site
+		base string
+	}{
+		{firstSite, "https://bucket.example.com"},
+		{secondSite, "https://other.example.com"},
+	} {
+		got := fetch(t, test.site, "/uploads/a.jpg?x-oss-process=image/resize,w_300")
+		location := got.Header().Get("Location")
+		if got.Code != http.StatusFound || !strings.HasPrefix(location, test.base+"/uploads/a.jpg?") {
+			t.Fatalf("重定向 = %d %q, 期望前缀 %q", got.Code, location, test.base)
+		}
+	}
+	// 第二站挂载后第一站不能被串
+	if got := first.URL("/uploads/a.jpg", 300, 0, "lfit"); !strings.HasPrefix(got, "https://bucket.example.com/") {
+		t.Fatalf("第一站被串了: %q", got)
+	}
+	if got := second.URL("/uploads/a.jpg", 300, 0, "lfit"); !strings.HasPrefix(got, "https://other.example.com/") {
+		t.Fatalf("第二站 URL() = %q", got)
 	}
 }

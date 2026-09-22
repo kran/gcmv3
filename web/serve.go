@@ -96,6 +96,11 @@ func (s *Site) serveFiles(dir, pattern, prefix string, userContent bool) {
 			ctx.FailText(err) // 插件返回 *Error 就是它的状态码, 别的算 500
 			return
 		}
+		// 插件自己应答了（重定向到 CDN 之类）⇒ 空路径 = "别再发文件", 直接返回。
+		// 少了这条, 302 的响应体后面会被追加整个文件的内容。
+		if path == "" {
+			return
+		}
 		// 不让浏览器猜 MIME（猜出来的类型会绕过扩展名策略）
 		ctx.SetHeader("X-Content-Type-Options", "nosniff")
 		if userContent && !inlineSafe(path) {
