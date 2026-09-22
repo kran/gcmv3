@@ -3,7 +3,7 @@
         <!-- 缩略网格（多图紧凑 — 不逐项长表单） -->
         <div class="gallery-grid">
             <div v-for="(p, i) in (value || [])" :key="p" class="gallery-item">
-                <img :src="p" class="gallery-thumb" @click="openPreview(p)" />
+                <img :src="thumbURL(p)" class="gallery-thumb" @click="openPreview(p)" />
                 <div class="gallery-overlay">
                     <el-button link size="small" @click="move(i, -1)" :disabled="i === 0">‹</el-button>
                     <el-button link size="small" @click="move(i, 1)"
@@ -63,7 +63,8 @@ export default {
             const t = arr[i]; arr[i] = arr[j]; arr[j] = t
             this.$emit('update:modelValue', arr)
         },
-        openPreview(p) { window.open(p, '_blank') },
+        openPreview(p) { window.open(p, '_blank') },   // 看大图 = 原图, 不给参数
+        thumbURL(p) { return window.$img.url(p, 'gallery') },
     },
 }
 </script>

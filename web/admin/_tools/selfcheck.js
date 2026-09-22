@@ -20,16 +20,15 @@ const TMP = path.join(os.tmpdir(), 'admin-selfcheck')
 
 // [说明, 模式, 文件, 原文, 改成]
 const CASES = [
+    // 缩略图不走 $img.url ⇒ 列表下整张原图
+    ['缩略图必须走 $img.url 闸门', 'sfc', 'widgets/upload-image.vue',
+        ':src="thumbSrc"', ':src="modelValue"'],
     // 树视图里还留着检索框（树一次装整棵 ⇒ 检索不参与 ⇒ 框是摆设）
     ['树视图隐藏检索框闸门', 'sfc', 'pages/nodes.vue',
         'v-if="displayField && !treeMode"', 'v-if="displayField"'],
     // 检索字面量自己拼引号 ⇒ 输入含 " 或 \ 就把条件拼坏
     ['检索字面量转义闸门', 'sfc', 'pages/nodes.vue',
         'JSON.stringify(term)', 'term'],
-    // 缩略图不带缩放参数 ⇒ 列表下原图（30px 的格子下 3MB 图）
-    ['缩略图带缩放参数闸门', 'sfc', 'widgets/upload-image.vue',
-        "const THUMB_PROCESS = 'x-oss-process=image/resize,w_30,h_30,m_fill'",
-        "const THUMB_PROCESS = 'image/resize,w_30,h_30,m_fill'"],
     ['setup 返回未定义的名字', 'sfc', 'pages/App.vue', 'var loginRealms = ref([])', 'var loginRealmsRenamed = ref([])'],
     ['App.vue 挂载闸门', 'render', 'pages/App.vue', 'Panel.onError(', 'Panel.onErrorX('],
     ['登录渠道下拉闸门', 'render', 'pages/App.vue', ':label="r.name" :value="r.name"', ':label="r.realm" :value="r.realm"'],

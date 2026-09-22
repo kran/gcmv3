@@ -2,7 +2,7 @@
      文件名就是 kind 名（web/admin/widgets/gallery.vue），mode = edit 编辑 / cell 列表单元格 / view 只读详情（后两者都只展示值, 不出现控件）。 -->
 <template>
     <span v-if="mode !== 'edit'" class="w-cell w-gallery">
-        <img v-for="url in thumbs" :key="url" :src="url" class="w-thumb" />
+        <img v-for="url in thumbs" :key="url" :src="thumbURL(url)" class="w-thumb" />
         <span v-if="rest > 0" class="w-more">+{{ rest }}</span>
         <span v-if="!list.length" class="w-empty">—</span>
     </span>
@@ -21,11 +21,12 @@ export default {
     components: { GalleryEditor: Vue.defineAsyncComponent(() => window.Panel.loadComponent('pages/GalleryEditor.vue')) },
     computed: {
         list() { return Array.isArray(this.modelValue) ? this.modelValue : [] },
-        thumbs() { return this.list.slice(0, 3) },
+        thumbs() { return this.list.slice(0, 3) },   // 模板里经 $img.url 取缩略图（见 thumbURL）
         rest() { return Math.max(0, this.list.length - 3) },
     },
     methods: {
-        emitValue(v) { this.$emit('update:modelValue', v) },    },
+        emitValue(v) { this.$emit('update:modelValue', v) },
+        thumbURL(p) { return window.$img.url(p, 'thumb') },    },
 }
 </script>
 <style>

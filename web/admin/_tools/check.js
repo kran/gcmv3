@@ -204,14 +204,31 @@ function checkWidgetStyles() {
         problems.push('nodes.vue: 显示名检索的字面量必须用 JSON.stringify（自己拼引号会被输入里的 " \\ 拼坏）')
     }
 
-    const imageWidget = read(path.join(ADMIN_DIR, 'widgets/upload-image.vue'))
-    const process = imageWidget.match(/x-oss-process=image\/resize,w_(\d+),h_(\d+),m_(\w+)/)
-    if (!process) {
-        problems.push('upload-image.vue: 缩略图没有带 x-oss-process 缩放参数（列表会下整张原图）')
+    // ② 图片字段的值**不许直接当 src**（`modelValue` / `url` / `p` / `xxx.fields.yyy` 这种
+    //    裸值 = 原图直出 ⇒ 30px 的格子下整张图）。要过 js/image.js 的 $img.url。
+    //    允许 `:src="thumbSrc"` 这种 computed —— 它内部会走 $img.url（下面核对它确实用了）。
+    const imageFiles = ['widgets/upload-image.vue', 'widgets/gallery.vue', 'pages/GalleryEditor.vue']
+    for (const file of imageFiles) {
+        const src = read(path.join(ADMIN_DIR, file))
+        if (!src.includes('$img.url(')) {
+            problems.push(file + ': 没有用 $img.url(...)（图片会原图直出）')
+        }
+        const tags = src.match(/<img[^>]*:src="[^"]*"[^>]*>/g) || []
+        for (const tag of tags) {
+            const value = (tag.match(/:src="([^"]*)"/) || [])[1] || ''
+            if (/^(modelValue|url|p|src|item|node)\b/.test(value) || /\.fields\./.test(value)) {
+                problems.push(file + ': 图片 src 直接用了字段值（原图直出，要走 $img.url）: ' + value)
+            }
+        }
+    }
+    const imageHelpers = read(path.join(ADMIN_DIR, 'js/image.js'))
+    const thumbSize = (imageHelpers.match(/thumb:\s*\{\s*width:\s*(\d+),\s*height:\s*(\d+)/) || [])[1]
+    if (!thumbSize) {
+        problems.push('js/image.js: 找不到 thumb 尺寸（图片参数的唯一出处）')
     } else {
         const cssWidth = (thumb.match(/width:\s*(\d+)px/) || [])[1]
-        if (cssWidth && process[1] !== cssWidth) {
-            problems.push(`upload-image.vue: 缩略图参数 ${process[1]}px 与 .w-thumb 样式 ${cssWidth}px 不一致`)
+        if (cssWidth && thumbSize !== cssWidth) {
+            problems.push('js/image.js 的 thumb=' + thumbSize + 'px 与 .w-thumb 的 ' + cssWidth + 'px 不一致')
         }
     }
 
@@ -999,6 +1016,8 @@ async function checkRender() {
     // ⑨ 每个 kind 的**真实**组件（不是桩件）：cell 模式必须真的渲染出内容。
     //    组件是异步的 —— 等一拍再断言；"列表里那列是空的"就是这么漏掉的。
     vm.runInContext(read(path.join(ADMIN_DIR, 'js/widgets.js')), sandbox, { filename: 'widgets.js' })
+    // 出图参数在 js/image.js（widget 里用 window.$img）—— 必须在渲染 widget 之前加载
+    vm.runInContext(read(path.join(ADMIN_DIR, 'js/image.js')), sandbox, { filename: 'image.js' })
 
     // ③c nodes.vue 的时间列格式化: 值现在是 **Unix 秒**（整数）——
     //     直接对数字做 .replace('T',' ') 会抛 TypeError（真实踩过, 列表整页崩）。
