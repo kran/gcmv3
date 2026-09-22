@@ -93,8 +93,23 @@ func run(from, to, basedir string) error {
 		fmt.Printf("  %-14s %d 行 ✓\n", step.name, after)
 	}
 	// 丢掉的东西要说清（免得以为"搬完了就一模一样"）。
-	fmt.Println("  丢掉: accounts（v2 的遗留后台账号, 已被 auth_methods 取代）、" +
-		"settings（空的）、nodes_fts*（内核没有全文检索）")
+	//
+	// 旧版这里写的是"settings（空的）"—— **写死的标签, 不是检查** ✗: 碰上真有数据的库
+	// 会被这句话骗过去（lizhiqi 首页的 setting 就是这么丢的, 后来才发现页面上空白）。
+	// 现在数一遍真行数, 有数据就响亮提醒。
+	droppedSettings := 0
+	{
+		row, err := source.Add(`SELECT COUNT(1) FROM settings`).FetchOne[int64]()
+		if err != nil {
+			return fmt.Errorf("数源库 settings: %w", err)
+		}
+		if row != nil {
+			droppedSettings = int(*row)
+		}
+	}
+	fmt.Printf("  丢掉: accounts（v2 的遗留后台账号, 已被 auth_methods 取代）、"+
+		"settings（**%d 行** —— 有数据就得自己搬: 站点侧用 settings 插件导过去）、"+
+		"nodes_fts*（内核没有全文检索）\n", droppedSettings)
 	if err := verifyTimeFields(target, ts); err != nil {
 		return err
 	}

@@ -2,8 +2,9 @@
 
 ## 有人用再补
 
-- [ ] **settings 插件零消费方**：已实现（声明驱动、无分组）但没有任何站点挂它。
-      它的意义就是"站点名 / logo / 电话搬进后台可改" —— 接站点是站点仓库的事。
+- [x] **settings 插件有消费方了**：lizhiqi 接上（首页简介 + 客户图），并配了
+      `tools/import-settings`（v2 的 settings 表 → 插件的表，值原样）。
+      随手加的 `richtext` 类型（声明说实话，面板按多行文本框编辑）。
 - [ ] 插件面板不在后台闸门扫描范围：`plugin/*/web/*.vue`（backup / settings 的面板）
       没被 `web/admin/_tools/check.js` 编译检查 ⇒ 面板里的语法错误要等浏览器里才炸。
 - [ ] 搜索没有高亮（v2 的 highlight 插件已废弃）。要做就给 `web/render` 加一个 mark/highlight 内置。
@@ -19,6 +20,9 @@
       —— 而短语是排序质量的一半，别乱关。
 
 ## 已完成（留着备查）
+
+- [x] `legacy-migrate` 那句写死的"settings（空的）"改成**真实行数** —— 它是假的标签，
+      碰上有数据的库会把人骗过去（lizhiqi 首页空白就是这么来的）。
 
 - [x] `web.HostMux`（多站分发，按 Host 头）+ 重复 Host 报错（v2 是静默覆盖）。
 - [x] `site.yaml` 的 `fields:`（站点自己的配置）+ `Site.Fields()`（返回副本）。

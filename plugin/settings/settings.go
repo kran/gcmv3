@@ -45,6 +45,7 @@ const DefaultPrefix = "/settings"
 const (
 	KindText        = "text"
 	KindTextarea    = "textarea"
+	KindRichtext    = "richtext" // 富文本（值就是 HTML; 后台按多行文本框编辑）
 	KindNumber      = "number"
 	KindBool        = "bool"
 	KindSelect      = "select"
@@ -144,7 +145,7 @@ func (p *Plugin) checkItem(item Item) error {
 		return fmt.Errorf("settings: 键 %q 只能由字母/数字/下划线/连字符/点组成", item.Key)
 	}
 	switch item.Kind {
-	case KindText, KindTextarea, KindNumber, KindBool, KindSelect,
+	case KindText, KindTextarea, KindRichtext, KindNumber, KindBool, KindSelect,
 		KindUploadImage, KindUploadFile, KindJSON:
 	case "":
 		return fmt.Errorf("settings: %q 没写 Kind（后台不知道该用什么控件）", item.Key)
@@ -165,7 +166,7 @@ func (p *Plugin) checkItem(item Item) error {
 
 // Kinds 支持的编辑形态（给报错信息和文档用）。
 func Kinds() []string {
-	return []string{KindText, KindTextarea, KindNumber, KindBool, KindSelect,
+	return []string{KindText, KindTextarea, KindRichtext, KindNumber, KindBool, KindSelect,
 		KindUploadImage, KindUploadFile, KindJSON}
 }
 

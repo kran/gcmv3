@@ -16,8 +16,8 @@
         <el-select v-else-if="item.kind === 'select'" v-model="item.value" style="width:100%;">
           <el-option v-for="o in item.options || []" :key="o" :label="o" :value="o" />
         </el-select>
-        <el-input v-else-if="item.kind === 'textarea' || item.kind === 'json'"
-                  v-model="item.text" type="textarea" :rows="item.kind === 'json' ? 5 : 3" />
+        <el-input v-else-if="item.kind === 'textarea' || item.kind === 'richtext' || item.kind === 'json'"
+                  v-model="item.text" type="textarea" :rows="item.kind === 'json' ? 5 : (item.kind === 'richtext' ? 6 : 3)" />
         <div v-else-if="item.kind === 'upload-image' || item.kind === 'upload-file'"
              style="display:flex;gap:8px;align-items:center;width:100%;">
           <el-input v-model="item.text" :placeholder="item.kind === 'upload-image' ? '/uploads/xxx.png' : '/uploads/xxx.pdf'" />
