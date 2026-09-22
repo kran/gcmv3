@@ -685,6 +685,17 @@ async function checkRender() {
         } else if (!/isOwner/.test(panelRoot)) {
             fail('凭据面板根元素没有 isOwner 守卫（非 owner 会看到别人的凭据）: ' + panelRoot)
         }
+        // 过期响应守卫: mounted 的 load 与 watch 的 reload 可能同时在飞 ⇒ 先发后到的
+        // 旧响应会把列表覆盖回**上一个节点**的凭据（真实踩过: 面板显示上一个账号的登录名,
+        // 刷新一下才对）。请求序号是这条不变量的最小实现。
+        // 注意行首锚: 不然会匹配到 reload() 里的 "load() {"（踩过）
+        const loadSrc = (panelSrc.match(/\n        load\(\) \{[\s\S]{0,900}?\n        \},/) || [''])[0]
+        if (!/const requestID = \+\+this\.requestID/.test(loadSrc)) {
+            fail('AuthPanel 的 load() 没有请求序号（换节点时旧响应会覆盖新列表）')
+        } else if (!/if \(requestID !== this\.requestID\)/.test(loadSrc)) {
+            fail('AuthPanel 的 load() 拿了序号却没丢弃过期响应')
+        }
+
         const apiSrc = read(path.join(ADMIN_DIR, 'js/api.js'))
         const authMethodsSrc = (apiSrc.match(/authMethods:[\s\S]{0,240}?\},/) || [''])[0]
         if (!/quiet:\s*true/.test(authMethodsSrc)) {

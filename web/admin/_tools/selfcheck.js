@@ -20,6 +20,9 @@ const TMP = path.join(os.tmpdir(), 'admin-selfcheck')
 
 // [说明, 模式, 文件, 原文, 改成]
 const CASES = [
+    // 凭据面板去掉请求序号 ⇒ 换节点时旧响应会覆盖新列表
+    ['凭据面板过期响应闸门', 'render', 'pages/AuthPanel.vue',
+        'const requestID = ++this.requestID', 'const requestID = this.requestID'],
     // 缩略图不走 $img.url ⇒ 列表下整张原图
     ['缩略图必须走 $img.url 闸门', 'sfc', 'widgets/upload-image.vue',
         ':src="thumbSrc"', ':src="modelValue"'],

@@ -49,6 +49,7 @@ export default {
             methods: [],          // 已有凭据（方式 + 标识, 永无哈希）
             passwordMethods: [],  // 类型声明过、框架能设口令的方式
             form: { method: '', identifier: '', secret: '' },
+            requestID: 0,     // 过期响应守卫（见 load()）
         }
     },
     // 抽屉的 DOM 是**复用**的（关掉再开另一个节点不会重新挂载）⇒ 只在 mounted 里加载
@@ -76,7 +77,14 @@ export default {
         },
         // load 拉凭据（静默: 拿不到就保持不显示 —— 附加面板不该把人挡在编辑之外）。
         load() {
+            // 请求序号: 换节点时可能有两个 load 同时在飞（mounted 那次 + watch 那次）——
+            // **先发后到的旧响应**会把列表覆盖回上一个节点的凭据（真实踩过: 面板显示上一个
+            // 账号的登录名, 刷新一下才对）。
+            const requestID = ++this.requestID
             window.$api.authMethods(this.type, this.nodeId).then((res) => {
+                if (requestID !== this.requestID) {
+                    return // 过期响应: 直接丢, 不写状态
+                }
                 this.methods = res.methods || []
                 this.passwordMethods = res.password_methods || []
                 if (!this.form.method && this.passwordMethods.length) {
