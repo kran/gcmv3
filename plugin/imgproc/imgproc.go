@@ -46,33 +46,40 @@ type Options struct {
 	BaseURL string
 }
 
-// plugin 装好的实例（URL() 要用 base）。
-type plugin struct{ baseURL string }
+// Plugin 装好的实例（每个站点一个 —— URL() 要用**自己**的 base）。
+//
+// 以前这里是**包级全局** `mounted` ⇒ 多站进程（web.HostMux）里后挂的站会把前一个覆盖
+// ⇒ viicn 的页面用上 lizhiqi 的桶（图片全 404）。**站点相关的东西不能放包级**。
+type Plugin struct{ baseURL string }
 
-var mounted *plugin
-
-// Mount 装上插件（注册 HookServeFile —— 图片处理）。
-func Mount(s *web.Site, options Options) {
+// Mount 装上插件（注册 HookServeFile —— 图片处理），返回实例供 URL() 用。
+//
+// 装上之后的用法（站点侧）:
+//
+//	img := imgproc.Mount(site, imgproc.Options{BaseURL: cfg.OssBucket})
+//	... img.URL(path, 600, 400, "fill")
+func Mount(s *web.Site, options Options) *Plugin {
 	base := strings.TrimRight(strings.TrimSpace(options.BaseURL), "/")
-	mounted = &plugin{baseURL: base}
+	instance := &Plugin{baseURL: base}
 	if base != "" {
 		// 交给远端: 本地不做任何处理（远端按同一套 x-oss-process 参数处理）
-		return
+		return instance
 	}
 	s.Hook(web.HookServeFile, ServeFile)
+	return instance
 }
 
 // URL 拼一个图片地址（模板用它 ⇒ 本地/OSS 两种部署只差配置）。
 //
-//	imgproc.URL("/uploads/a.jpg", 300, 0, "lfit") ⇒
+//	img.URL("/uploads/a.jpg", 300, 0, "lfit") ⇒
 //	  本地: /uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit
 //	  OSS : https://bucket…/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit
 //
-// 没装插件也安全（按本地相对路径拼）—— 模板不该依赖"装没装插件"。
-func URL(path string, width, height int, mode string) string {
+// **实例方法**（不是包级全局）: 多站进程里每个站有自己的桶, 谁也不能覆盖谁。
+func (p *Plugin) URL(path string, width, height int, mode string) string {
 	base := ""
-	if mounted != nil {
-		base = mounted.baseURL
+	if p != nil {
+		base = p.baseURL
 	}
 	if path == "" {
 		return ""

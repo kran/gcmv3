@@ -239,20 +239,32 @@ func TestURLBuilder(t *testing.T) {
 			t.Errorf("ProcessQuery(%d,%d,%q) = %q, 期望 %q", c.width, c.height, c.mode, got, c.want)
 		}
 	}
-	// 没装插件也要能拼（模板不该依赖装没装）
-	if got := URL("uploads/a.jpg", 300, 0, "lfit"); got != "/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
-		t.Errorf("URL() = %q", got)
+	// 没装插件也要能拼（模板不该依赖装没装）—— nil 实例 = 本地相对路径
+	var none *Plugin
+	if got := none.URL("uploads/a.jpg", 300, 0, "lfit"); got != "/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
+		t.Errorf("nil 实例 URL() = %q", got)
 	}
 }
 
 // 配了 BaseURL ⇒ 本地不挂 hook（交给远端处理）, URL() 带上前缀。
+//
+// 顺带钉住"多站不串桶": 两个实例各自带自己的前缀（以前是包级全局 ⇒ 后者覆盖前者）。
 func TestBaseURLSkipsLocalProcessing(t *testing.T) {
 	site, _ := newSite(t)
-	Mount(site, Options{BaseURL: "https://bucket.example.com/"})
-	t.Cleanup(func() { mounted = nil })
-	if got := URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
+	images := Mount(site, Options{BaseURL: "https://bucket.example.com/"})
+	if got := images.URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
 		"https://bucket.example.com/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
 		t.Fatalf("配了 BaseURL 的 URL() = %q", got)
 	}
-	mounted = nil
+	// 第二个实例（另一个站点）不能影响第一个 —— 这就是当初包级全局串桶的根因
+	other, _ := newSite(t)
+	second := Mount(other, Options{BaseURL: "https://other.example.com/"})
+	if got := second.URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
+		"https://other.example.com/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
+		t.Fatalf("第二站 URL() = %q", got)
+	}
+	if got := images.URL("/uploads/a.jpg", 300, 0, "lfit"); got !=
+		"https://bucket.example.com/uploads/a.jpg?x-oss-process=image/resize,w_300,m_lfit" {
+		t.Fatalf("第二站挂载后第一站被串了: %q", got)
+	}
 }
