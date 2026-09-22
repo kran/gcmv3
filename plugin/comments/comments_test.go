@@ -66,7 +66,10 @@ func newHarness(t *testing.T, options Options, configure ...func(*web.Site)) *ha
 	}
 	t.Cleanup(func() { _ = site.Close() })
 
-	for _, typeName := range []string{"article", "event"} {
+	// article/event 公开;**member 也要**: 评论展开的作者节点如果读不到, 展开会被
+	// 丢掉（引用不能成为掩码的旁路 —— 这是对的行为, 但夹具得给它一条读规则,
+	// 否则"作者展不开"会被误读成插件的 bug）。
+	for _, typeName := range []string{"article", "event", "member"} {
 		site.Type(typeName).OnRead(func(_ *web.CmsCtx, where *so.Where, _ *web.Grant) error {
 			*where = so.P("true")
 			return nil
@@ -235,6 +238,44 @@ func TestPostAndList(t *testing.T) {
 	if ids := itemIDs(t, author); len(ids) != 1 {
 		t.Fatalf("items 应当 1 条, 实际 %v", ids)
 	}
+}
+
+// 列表**只展开作者与回复对象** —— 不展开 target（被评论的那篇文章）: 每行评论都内联
+// 一份文章正文纯属浪费（真实站点一页 20 条 ≈ 30~80KB）。core.NodeQuery.Expand 就是
+// 为这件事加的: nil = 全展开（老行为）, 列路径 = 只展开这些。
+func TestListExpandIsNarrowed(t *testing.T) {
+	h := newHarness(t, Options{})
+	long := strings.Repeat("正文", 400) // 800 字
+	article := h.create(t, "article", core.Fields{"name": "长文", "body": long})
+	h.create(t, "comment", core.Fields{
+		"body": "一条评论", "target": article, "state": "approved", "author": h.member,
+	})
+
+	response, payload := h.list(t, map[string]string{"type": "article", "target": fmt.Sprint(article)}, h.token)
+	if response.Code != http.StatusOK {
+		t.Fatalf("列表 = %d: %s", response.Code, response.Body.String())
+	}
+	items, _ := payload["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("该有 1 条评论: %#v", items)
+	}
+	item, _ := items[0].(map[string]any)
+	expand, _ := item["expand"].(map[string]any)
+	if _, ok := expand["author"]; !ok {
+		t.Fatalf("author 该被展开（前端要用作者名）: %#v", expand)
+	}
+	if _, ok := expand["target"]; ok {
+		t.Fatalf("target **不该**被展开（那是整篇文章）: %#v", expand)
+	}
+	// 响应里不该出现那篇文章的正文
+	if strings.Contains(response.Body.String(), long[:60]) {
+		t.Fatal("响应里出现了被评论文章的正文 —— 展开没收窄")
+	}
+	if response.Body.Len() >= len(long) {
+		t.Fatalf("响应 %d 字节, 比文章正文 %d 字节还大", response.Body.Len(), len(long))
+	}
+	t.Logf("收窄前后对比: 文章正文 %d 字节（旧行为每行评论都会内联它） vs 现在整页响应 %d 字节",
+		len(long), response.Body.Len())
 }
 
 // 审核通过后公众可见（可见性只有站点读规则一个来源）。

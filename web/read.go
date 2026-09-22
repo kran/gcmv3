@@ -28,7 +28,7 @@ import (
 //
 // typeName 是**路由上的类型**（不是"从节点里读出来的"）: 地址是全表唯一的, 拿
 // 别的类型的路由去打一个 id 也不该拿到东西。
-func (c *CmsCtx) Get(typeName string, ref any) (*core.Node, error) {
+func (c *CmsCtx) Get(typeName string, ref any, expand ...string) (*core.Node, error) {
 	node, err := c.site.engine.GetNode(ref)
 	if err != nil {
 		if errors.Is(err, core.ErrNotFound) {
@@ -44,7 +44,7 @@ func (c *CmsCtx) Get(typeName string, ref any) (*core.Node, error) {
 		return nil, err
 	}
 	rawFields := node.Fields // 掩码会把 Fields 换成新 map; 规则求值要用真值
-	err = c.expandAndMask([]*core.Node{node})
+	err = c.expandAndMask([]*core.Node{node}, expand...)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (c *CmsCtx) List(q core.NodeQuery, limit, offset int) ([]*core.Node, int64,
 	if err != nil {
 		return nil, 0, CoreError(err)
 	}
-	err = c.expandAndMask(nodes)
+	err = c.expandAndMask(nodes, q.Expand...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -114,15 +114,28 @@ func (c *CmsCtx) visible(node *core.Node) (bool, error) {
 	return count > 0, nil
 }
 
-// expandAndMask 就地展开一层再掩码。展开路径用 `*` = "该类型的所有引用字段"
-// （core 按声明算路径, web 不重复一份字段知识）。
-func (c *CmsCtx) expandAndMask(nodes []*core.Node) error {
+// expandAndMask 就地展开再掩码。
+//
+// paths 语义与 core.NodeQuery.Expand 一致:
+//
+//	nil（不传）      → `*` = 该类型的所有引用字段（历史行为, 一字不变）
+//	显式路径         → 只展开这些（`author` / `->author` 都行, core 按声明解析）
+//	空的非 nil 切片  → 一个都不展开（"我就要裸节点"）
+//
+// 为什么要这个开关: 展开会把**整个被引用节点**塞进响应（含正文）, 而很多列表只需要
+// 其中一个引用（评论列表要作者与回复对象, 不要它引用的那篇文章正文）。
+func (c *CmsCtx) expandAndMask(nodes []*core.Node, paths ...string) error {
 	if len(nodes) == 0 {
 		return nil
 	}
-	_, err := c.site.engine.ExpandNodes(nodes, "*")
-	if err != nil {
-		return CoreError(err)
+	if paths == nil {
+		paths = []string{"*"}
+	}
+	if len(paths) > 0 {
+		_, err := c.site.engine.ExpandNodes(nodes, paths...)
+		if err != nil {
+			return CoreError(err)
+		}
 	}
 	return c.MaskNodes(nodes)
 }

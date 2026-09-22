@@ -18,15 +18,24 @@ import (
 	"github.com/kran/gcmv3/types"
 )
 
-// NodeQuery 描述"选哪些节点": 类型 + 条件 + 排序。
+// NodeQuery 描述"选哪些节点": 类型 + 条件 + 排序 + 展开哪些引用。
 //
-// 不含分页（在调用参数上）、不含展开（读完之后的独立一步）。
+// 不含分页（在调用参数上）。
 type NodeQuery struct {
 	Type string
 	// Where 是**前端树**（`gql.P/AND/OR/NOT/REF` 的产物）—— core 负责把它读成
 	// AST 再编译。零值 = 不过滤。
 	Where gql.Where
 	Sort  []gql.SortField
+	// Expand 展开哪些引用路径（`->field` 或 `*` = 该类型的所有引用字段）。
+	//
+	// **nil = 全展开**（`*`, 读入口的历史行为, 所有老调用方不变）;
+	// **非 nil 空切片 = 一个都不展开**（"我就要裸节点"）;
+	// 要精确控制就列路径 —— 例如评论列表只要 `[]string{"author", "parent"}`,
+	// 没必要把每行评论引用的那篇文章正文也拖进响应（真实站点一页 20 条 ≈ 30~80KB）。
+	//
+	// 注意 nil 与空切片**语义不同**（这是刻意的: 零值必须保持老行为）。
+	Expand []string
 }
 
 const (

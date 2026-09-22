@@ -42,6 +42,8 @@ const (
 	DefaultTargetField = "target"
 	// DefaultBodyField 默认正文字段名。
 	DefaultBodyField = "body"
+	// DefaultAuthorField 默认作者字段名。
+	DefaultAuthorField = "author"
 	// DefaultParentField 默认"回复谁"的引用字段名。
 	DefaultParentField = "parent"
 
@@ -69,6 +71,10 @@ type Options struct {
 	Type string
 	// TargetField 指向被评论对象的引用字段（空 = DefaultTargetField）。
 	TargetField string
+	// AuthorField 指向作者的引用字段（空 = DefaultAuthorField）。
+	// 列表只展开作者与回复对象 —— 不展开 target: 那是被评论的文章, 每行都拖一份
+	// 正文进响应毫无意义（真实站点一页 20 条 ≈ 30~80KB）。
+	AuthorField string
 	// BodyField 正文字段（空 = DefaultBodyField）—— 应当是 text/textarea,
 	// **不要用 richtext**: 正文会被原样渲染成 HTML 的话, 评论就成了注入口。
 	BodyField string
@@ -149,6 +155,9 @@ func withDefaults(options Options) Options {
 	}
 	if options.BodyField == "" {
 		options.BodyField = DefaultBodyField
+	}
+	if options.AuthorField == "" {
+		options.AuthorField = DefaultAuthorField
 	}
 	if options.ParentField == "" {
 		options.ParentField = DefaultParentField
@@ -273,7 +282,15 @@ func (p *Plugin) list(ctx *web.CmsCtx) {
 	page := positive(ctx.Query("page"), 1)
 	size := min(positive(ctx.Query("size"), p.opts.PageSize), MaxPageSize)
 	where := so.P("in", "->"+p.opts.TargetField, []any{target.ID})
-	nodes, total, err := ctx.List(core.NodeQuery{Type: p.opts.Type, Where: where, Sort: p.newestFirst()}, size, (page-1)*size)
+	// **只展开作者与回复对象**（前端就只用这两个）—— 不展开 target: 那是被评论的文章,
+	// 每行评论都内联一份正文纯属浪费（core.NodeQuery.Expand 就是为这件事加的）。
+	expand := []string{p.opts.AuthorField}
+	if p.opts.ParentField != "-" {
+		expand = append(expand, p.opts.ParentField)
+	}
+	nodes, total, err := ctx.List(core.NodeQuery{
+		Type: p.opts.Type, Where: where, Sort: p.newestFirst(), Expand: expand,
+	}, size, (page-1)*size)
 	if err != nil {
 		ctx.Fail(err)
 		return
