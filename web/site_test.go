@@ -199,3 +199,100 @@ func testLogger(lines *[]string) *slog.Logger {
 type writerFunc func([]byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
+
+// 站点自己的配置放 site.yaml 的 **fields:** 子树（框架不解释里面的键）。
+//
+// 分工: 仓库级的 sites.yaml 只回答"哪个目录 + 认哪些域名"（部署拓扑）; 站点自己的
+// base_url / oss_bucket / feishu_hooks 这类东西跟着站点走 —— 一个站一个目录, 搬走就是
+// 一个目录。
+func TestSiteFields(t *testing.T) {
+	basedir := t.TempDir()
+	err := writeTypesFile(basedir, `
+name: 测试站
+fields:
+  base_url: https://example.com
+  oss_bucket: ""
+  feishu_hooks:
+    contact: https://open.example/hook
+types:
+  article:
+    fields:
+      - { name: title, kind: text }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site, err := Open(basedir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = site.Close() })
+
+	if got := site.Field("base_url"); got != "https://example.com" {
+		t.Fatalf("base_url = %#v", got)
+	}
+	fields := site.Fields()
+	if fields.Str("oss_bucket") != "" {
+		t.Fatalf("oss_bucket 该是空串, 实际 %#v", fields["oss_bucket"])
+	}
+	// 嵌套的映射解出来是 core.Fields（同一个自由映射类型, 不是 map[string]any）——
+	// 站点那边用 yaml 往返把它变成自己的 typed 配置, 所以两种都认。
+	hooks := map[string]any{}
+	switch typed := fields["feishu_hooks"].(type) {
+	case map[string]any:
+		hooks = typed
+	case core.Fields:
+		for key, value := range typed {
+			hooks[key] = value
+		}
+	}
+	if hooks["contact"] != "https://open.example/hook" {
+		t.Fatalf("嵌套的 feishu_hooks 该原样拿到: %#v", fields["feishu_hooks"])
+	}
+	// 副本: 调用方改了不影响站点（配置是值, 不是共享可变状态）
+	fields["base_url"] = "改了"
+	if site.Field("base_url") != "https://example.com" {
+		t.Fatal("Fields() 该返回副本")
+	}
+}
+
+// 没写 fields 也能起（可选）; 但顶层拼错键仍然报错（fields 里面自由, 外面严格）。
+func TestSiteFieldsOptionalButTopLevelStrict(t *testing.T) {
+	basedir := t.TempDir()
+	err := writeTypesFile(basedir, `
+name: 测试站
+types:
+  article:
+    fields:
+      - { name: title, kind: text }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site, err := Open(basedir)
+	if err != nil {
+		t.Fatalf("没写 fields 该能起: %v", err)
+	}
+	t.Cleanup(func() { _ = site.Close() })
+	if len(site.Fields()) != 0 {
+		t.Fatalf("没写 fields 该是空映射: %#v", site.Fields())
+	}
+
+	badDir := t.TempDir()
+	err = writeTypesFile(badDir, `
+name: 测试站
+fieldz:
+  typo: 1
+types:
+  article:
+    fields:
+      - { name: title, kind: text }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Open(badDir)
+	if err == nil {
+		t.Fatal("顶层拼错键该报错（严格解析只在最外层; fields 里面才自由）")
+	}
+}

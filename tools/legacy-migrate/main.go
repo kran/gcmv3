@@ -400,11 +400,11 @@ func sqlFiles(dir string) ([]string, error) {
 // loadTypes 读站点声明（site.yaml: name + types）—— 用框架的同一个加载器,
 // 校验口径与起站完全一致（不再自己解析一遍）。
 func loadTypes(path string) (*types.Types, error) {
-	_, ts, err := web.LoadSiteFile(path)
+	decl, err := web.LoadSiteFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return ts, nil
+	return decl.Types, nil
 }
 
 // mustUnix 把 v2 的时间列（ISO 字符串）转成 Unix 秒。

@@ -53,7 +53,8 @@ type Site struct {
 	basedir string
 	db      *dba.SQL
 	types   *types.Types
-	name    string // 站点名（site.yaml 的 name）—— 后台左上角显示它
+	name    string      // 站点名（site.yaml 的 name）—— 后台左上角显示它
+	fields  core.Fields // 站点自己的配置（site.yaml 的 fields: 子树; 框架不解释）
 	engine  core.Engine
 	render  *Render // 懒创建（Site.Render()）—— 站点没渲染需求就不创建
 	router  *cho.Cho[*CmsCtx]
@@ -111,12 +112,12 @@ func Open(basedir string, opts ...Option) (*Site, error) {
 		_ = db.Pool().Close()
 		return nil, err
 	}
-	name, ts, err := loadSite(basedir)
+	decl, err := loadSite(basedir)
 	if err != nil {
 		_ = db.Pool().Close()
 		return nil, err
 	}
-	engine, err := core.OpenGCM(db, ts)
+	engine, err := core.OpenGCM(db, decl.Types)
 	if err != nil {
 		_ = db.Pool().Close()
 		return nil, err
@@ -125,7 +126,10 @@ func Open(basedir string, opts ...Option) (*Site, error) {
 	defineWebHooks(engine)
 	defineAuthHooks(engine)
 	defineAdminHooks(engine)
-	site := &Site{basedir: basedir, name: name, db: db, types: ts, engine: engine}
+	site := &Site{
+		basedir: basedir, name: decl.Name, fields: decl.Fields,
+		db: db, types: decl.Types, engine: engine,
+	}
 	site.auth = newAuthRegistry(site)
 	// 每个 auth 能力类型自动一条同名渠道（站点显式 Register 覆盖它）
 	site.auth.registerDefaults()
@@ -176,6 +180,20 @@ func (s *Site) Types() *types.Types { return s.types }
 
 // Name 站点名（site.yaml 的 name; 空 = 没声明）—— 后台左上角/登录副标题显示它。
 func (s *Site) Name() string { return s.name }
+
+// Fields 站点自己的配置（site.yaml 的 fields: 子树）—— 框架不解释里面的键。
+//
+// 返回**副本**: 调用方改动不会影响站点（"一切皆值" —— 配置是值, 不是共享可变状态）。
+func (s *Site) Fields() core.Fields {
+	out := make(core.Fields, len(s.fields))
+	for key, value := range s.fields {
+		out[key] = value
+	}
+	return out
+}
+
+// Field 取站点配置里的一项（取不到返回 nil）。
+func (s *Site) Field(key string) any { return s.fields[key] }
 
 // BaseDir 站点根目录（库/类型/static/uploads 都在它下面）—— 站点与插件要读写自己的
 // 文件时用它（框架自己不用: 它只知道基于它的固定路径）。
@@ -233,28 +251,43 @@ func quietLogger(logger *slog.Logger) dba.LogFunc {
 //
 // 一份声明一个名字（site.yaml）—— 不留旧名兜底: 少一个分支, 拼错路径也不会静默用别的东西。
 // 两个解析都开严格模式（KnownFields）⇒ 键名拼错当场报错。
-func loadSite(basedir string) (string, *types.Types, error) {
+func loadSite(basedir string) (*SiteFile, error) {
 	return LoadSiteFile(filepath.Join(basedir, siteFile))
 }
 
-// LoadSiteFile 读一份站点声明（name + types）。
+// SiteFile 一份站点声明（site.yaml）。
+//
+// Name 是后台品牌; Types 是类型定义; **Fields 是站点自己的配置**（框架不解释它 ——
+// 站点读它, 例如 base_url / oss_bucket / feishu_hooks）。
+//
+// 为什么放这里而不是仓库级的 sites.yaml: 站点自己的东西就该在站点目录里 ——
+// 那份 sites.yaml 只回答"哪个目录 + 认哪些域名"（部署拓扑）, 其余全是站点的事。
+// 字段是**自由映射**（框架不校验里面的键 ⇒ 站点怎么用都行, 但拼错键要自己 fail-loud）。
+type SiteFile struct {
+	Name   string
+	Fields core.Fields
+	Types  *types.Types
+}
+
+// LoadSiteFile 读一份站点声明（name + fields + types）。
 //
 // 导出是给**站点根目录之外的调用方**用的（例如迁移工具、一次性脚本）—— 校验口径
 // 与起站完全一致, 不复制第二份解析。
-func LoadSiteFile(path string) (string, *types.Types, error) {
+func LoadSiteFile(path string) (*SiteFile, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return "", nil, fmt.Errorf("web: 读站点声明 %s: %w（站点根目录下必须有它）", siteFile, err)
+		return nil, fmt.Errorf("web: 读站点声明 %s: %w（站点根目录下必须有它）", siteFile, err)
 	}
 	var doc struct {
-		Name  string    `yaml:"name"`
-		Types yaml.Node `yaml:"types"`
+		Name   string      `yaml:"name"`
+		Fields core.Fields `yaml:"fields"`
+		Types  yaml.Node   `yaml:"types"`
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	err = decoder.Decode(&doc)
 	if err != nil {
-		return "", nil, fmt.Errorf("web: 解析 %s: %w", siteFile, err)
+		return nil, fmt.Errorf("web: 解析 %s: %w", siteFile, err)
 	}
 	if strings.TrimSpace(doc.Name) == "" {
 		// 不拦（但说一声）: 后台左上角会显示为空
@@ -266,14 +299,18 @@ func LoadSiteFile(path string) (string, *types.Types, error) {
 		Types yaml.Node `yaml:"types"`
 	}{Types: doc.Types})
 	if err != nil {
-		return "", nil, fmt.Errorf("web: 转 types 子树: %w", err)
+		return nil, fmt.Errorf("web: 转 types 子树: %w", err)
 	}
 	ts := types.New()
 	err = ts.Load(typesRaw)
 	if err != nil {
-		return "", nil, fmt.Errorf("web: load types: %w", err)
+		return nil, fmt.Errorf("web: load types: %w", err)
 	}
-	return strings.TrimSpace(doc.Name), ts, nil
+	fields := doc.Fields
+	if fields == nil {
+		fields = core.Fields{}
+	}
+	return &SiteFile{Name: strings.TrimSpace(doc.Name), Fields: fields, Types: ts}, nil
 }
 
 // applySchema 建引擎的基础表（幂等: DDL 全是 IF NOT EXISTS）。
