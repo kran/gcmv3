@@ -28,58 +28,84 @@ const roundLimit = 3
 //
 // 没有 total: 精确计数要扫完整个命中集（实测 10 万命中约 7s）, 而它唯一的用途是
 // "判断还有没有下一页" —— 那是 has_more 的活。
-func (p *Plugin) handle(ctx *web.CmsCtx) {
-	query := strings.TrimSpace(ctx.Query("q"))
+// Result 一次检索的结果。
+//
+// **HTTP 端点与站点服务端渲染共用同一条路径**（Search）: 索引 → id → 走读入口回读
+// （读规则/掩码/展开全在那儿）⇒ 两种用法的权限口径必然一致, 不会各写一份。
+type Result struct {
+	Nodes   []*core.Node `json:"items"`
+	HasMore bool         `json:"has_more"`
+	// Matched "phrase" = 这页里有"用户输入的连续短语"的命中; "any" = 只按词命中。
+	// 站点据此提示"未找到完全匹配，以下按相关度排序"。
+	Matched string `json:"matched"`
+	// Next 下一页游标（不透明串; HasMore 为假或本页为空时没有）。
+	Next string `json:"next_cursor,omitempty"`
+}
+
+// Search 检索（typeName 空 = 所有声明过的类型; size <= 0 用插件默认; cursor 空 = 第一页）。
+//
+// 站点做服务端渲染就走这里 —— 不用自己拼 FTS SQL, 也不用担心漏掉权限回读。
+func (p *Plugin) Search(ctx *web.CmsCtx, query, typeName string, size int, cursor string) (Result, error) {
+	query = strings.TrimSpace(query)
 	if query == "" {
-		ctx.Fail(web.BadRequest("请输入搜索关键词"))
-		return
+		return Result{}, web.BadRequest("请输入搜索关键词")
 	}
 	if utf8.RuneCountInString(query) > p.maxRunes {
-		ctx.Fail(web.BadRequest("搜索关键词过长（最多 %d 个字符）", p.maxRunes))
-		return
+		return Result{}, web.BadRequest("搜索关键词过长（最多 %d 个字符）", p.maxRunes)
 	}
-	typeName := strings.TrimSpace(ctx.Query("type"))
+	typeName = strings.TrimSpace(typeName)
 	if typeName != "" && !p.searchable(typeName) {
-		ctx.Fail(web.BadRequest("不支持的搜索类型: %s", typeName))
-		return
+		return Result{}, web.BadRequest("不支持的搜索类型: %s", typeName)
 	}
+	if size <= 0 {
+		size = p.defaultSize
+	}
+	if size > MaxSize {
+		size = MaxSize
+	}
+	cur, err := decodeCursor(cursor)
+	if err != nil {
+		return Result{}, web.BadRequest("%s", err.Error())
+	}
+	if cur != nil && (cur.Query != query || cur.Type != typeName) {
+		return Result{}, web.BadRequest("游标与本次检索不匹配（搜索词或类型变了）—— 从第一页重新开始")
+	}
+
+	pairs, hasMore, next, err := p.collect(ctx, query, typeName, cur, size)
+	if err != nil {
+		return Result{}, err
+	}
+	out := Result{Nodes: make([]*core.Node, 0, len(pairs)), HasMore: hasMore, Matched: "any"}
+	for _, item := range pairs {
+		out.Nodes = append(out.Nodes, item.Node)
+		if item.Phrase {
+			out.Matched = "phrase"
+		}
+	}
+	if next != nil && hasMore && len(pairs) > 0 {
+		out.Next = next.encode()
+	}
+	return out, nil
+}
+
+func (p *Plugin) handle(ctx *web.CmsCtx) {
+	query := strings.TrimSpace(ctx.Query("q"))
 	size, err := p.pageSize(ctx.Query("size"))
 	if err != nil {
 		ctx.Fail(err)
 		return
 	}
-	cursor, err := decodeCursor(ctx.Query("cursor"))
-	if err != nil {
-		ctx.Fail(web.BadRequest("%s", err.Error()))
-		return
-	}
-	if cursor != nil && (cursor.Query != query || cursor.Type != typeName) {
-		ctx.Fail(web.BadRequest("游标与本次检索不匹配（搜索词或类型变了）—— 从第一页重新开始"))
-		return
-	}
-
-	pairs, hasMore, next, err := p.collect(ctx, query, typeName, cursor, size)
+	result, err := p.Search(ctx, query, ctx.Query("type"), size, ctx.Query("cursor"))
 	if err != nil {
 		ctx.Fail(err)
 		return
 	}
-	items := make([]*core.Node, 0, len(pairs))
-	// matched: 这页里有没有"用户输入的连续短语"的命中 —— 前端据此提示
-	// "未找到完全匹配, 以下按相关度排序"。只按**看得见的**算（否则提示会骗人）。
-	matched := "any"
-	for _, item := range pairs {
-		items = append(items, item.Node)
-		if item.Phrase {
-			matched = "phrase"
-		}
-	}
-
 	payload := map[string]any{
-		"items": items, "has_more": hasMore, "size": size, "q": query, "type": typeName,
-		"matched": matched,
+		"items": result.Nodes, "has_more": result.HasMore, "size": size,
+		"q": query, "type": strings.TrimSpace(ctx.Query("type")), "matched": result.Matched,
 	}
-	if next != nil && hasMore && len(pairs) > 0 {
-		payload["next_cursor"] = next.encode()
+	if result.Next != "" {
+		payload["next_cursor"] = result.Next
 	}
 	_ = ctx.Json(http.StatusOK, payload)
 }
@@ -151,7 +177,7 @@ func (p *Plugin) collect(ctx *web.CmsCtx, query, typeName string, cursor *Cursor
 func (p *Plugin) pageSize(raw string) (int, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return DefaultSize, nil
+		return p.defaultSize, nil // 站点可在 Options.PageSize 里改默认
 	}
 	size, err := strconv.Atoi(raw)
 	if err != nil || size <= 0 {

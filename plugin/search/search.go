@@ -66,6 +66,7 @@ type Plugin struct {
 	site           *web.Site
 	prefix         string
 	maxRunes       int
+	defaultSize    int
 	searchableType map[string]bool
 }
 
@@ -90,6 +91,12 @@ func Mount(site *web.Site, options Options) (*Plugin, error) {
 	}
 	if plugin.maxRunes <= 0 {
 		plugin.maxRunes = DefaultMaxRunes
+	}
+	if plugin.defaultSize <= 0 {
+		plugin.defaultSize = DefaultSize
+	}
+	if plugin.defaultSize > MaxSize {
+		plugin.defaultSize = MaxSize
 	}
 	for _, name := range options.Types {
 		name = strings.TrimSpace(name)
