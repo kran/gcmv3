@@ -26,9 +26,12 @@ package imgproc
 
 import (
 	"fmt"
+	"html/template"
 	"image"
 	"log/slog"
 	"net/http"
+
+	"golang.org/x/net/html"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,6 +39,7 @@ import (
 
 	"github.com/disintegration/imaging"
 
+	"github.com/kran/gcmv3/types"
 	"github.com/kran/gcmv3/web"
 )
 
@@ -45,6 +49,9 @@ type Options struct {
 	// 配了 ⇒ 本地不处理（远端处理）, URL 由 URL() 拼; 空 ⇒ 本地处理。
 	BaseURL string
 }
+
+// contentImageWidth 正文图的最大宽度（lfit 只缩不放 ⇒ 小图不动）。
+const contentImageWidth = 1200
 
 // Plugin 装好的实例（每个站点一个 —— URL() 要用**自己**的 base）。
 //
@@ -61,12 +68,156 @@ type Plugin struct{ baseURL string }
 func Mount(s *web.Site, options Options) *Plugin {
 	base := strings.TrimRight(strings.TrimSpace(options.BaseURL), "/")
 	instance := &Plugin{baseURL: base}
+	instance.registerTemplateFuncs(s)
 	if base != "" {
 		// 交给远端: 本地不做任何处理（远端按同一套 x-oss-process 参数处理）
 		return instance
 	}
 	s.Hook(web.HookServeFile, ServeFile)
 	return instance
+}
+
+// registerTemplateFuncs 把图片相关的模板函数挂到站点上 —— **插件自己的功能就由插件注册**,
+// 站点不用在 setup 里再抄一遍（抄一遍就有第二份, 两站一改一忘 —— 踩过两次）。
+//
+//	oss   拼图片 URL（模板: {{ .Fields.cover | oss 800 450 "cover" }}）
+//	rich  富文本 → HTML, 并**把正文里写死的 <img src="/uploads/…"> 也过一遍 imgproc**
+//	      （模板里的 oss 只管字段值, 碰不到正文 HTML; OSS 部署下那些相对路径会打到本站）
+//
+// 两个函数都**覆盖**同名内置/站点版本: 装了图片插件, 图片相关的事就归它。
+func (p *Plugin) registerTemplateFuncs(s *web.Site) {
+	render := s.Render()
+	// 注册失败（名字冲突/签名不对）是配置期错误 ⇒ fail-loud
+	mustFunc := func(name string, fn any) {
+		err := render.Func(name, fn)
+		if err != nil {
+			panic("imgproc: 注册模板函数 " + name + ": " + err.Error())
+		}
+	}
+	mustFunc("oss", func(_ *web.CmsCtx, args ...any) (string, error) {
+		return p.ossURL(args...), nil
+	})
+	mustFunc("rich", func(_ *web.CmsCtx, value any) (template.HTML, error) {
+		return p.rich(value), nil
+	})
+}
+
+// ossURL 模板 `oss` 的实现。三处 v2 遗留物都在这里兜住:
+//
+//  1. **管道把值放最后**: `{{ .Fields.cover | oss 800 450 "cover" }}` 等价于
+//     `oss(800, 450, "cover", 路径)` —— 取 args[0] 会拿到 800 ⇒ 拼出空 URL（图全空, 踩过）。
+//  2. **值可能是 template.HTML**（站点配置的返回值）⇒ 只断言 string 会落空。
+//  3. **模式名**: v2 的 fit|cover|crop → v3 的 lfit|fill（写错图片服务返 400 ⇒ 图裂）。
+func (p *Plugin) ossURL(args ...any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	asText := func(value any) (string, bool) {
+		switch typed := value.(type) {
+		case string:
+			return typed, true
+		case template.HTML:
+			return string(typed), true
+		}
+		return "", false
+	}
+	path, mode := "", ""
+	width, height := 0, 0
+	rest := args
+	if text, ok := asText(args[0]); ok {
+		path = text
+		rest = args[1:]
+	} else {
+		path, _ = asText(args[len(args)-1])
+		rest = args[:len(args)-1]
+	}
+	for index, arg := range rest {
+		if text, ok := asText(arg); ok {
+			if mode == "" {
+				mode = text
+			}
+			continue
+		}
+		number, err := types.ToID(arg)
+		if err != nil {
+			continue
+		}
+		switch index {
+		case 0:
+			width = int(number)
+		case 1:
+			height = int(number)
+		}
+	}
+	switch mode {
+	case "fit":
+		mode = "lfit"
+	case "cover", "crop":
+		mode = "fill"
+	}
+	return p.URL(path, width, height, mode)
+}
+
+// rich 富文本 → HTML, 并把正文里的相对图片过一遍 imgproc。
+//
+// 用真解析器（x/net/html）而不是正则: 属性顺序/单双引号/自闭合这些正则迟早出错, 而正文是
+// 编辑器产出的机器 HTML。**解析失败原样返回**（宁可没优化, 不能丢内容）+ 日志。
+func (p *Plugin) rich(value any) template.HTML {
+	raw, ok := value.(string)
+	if !ok || raw == "" {
+		return template.HTML("") //nolint:gosec // 空
+	}
+	if !strings.Contains(raw, "<img") {
+		return template.HTML(raw) //nolint:gosec // 站点自己的富文本
+	}
+	nodes, err := html.ParseFragment(strings.NewReader(raw), nil)
+	if err != nil {
+		slog.Warn("imgproc: 富文本解析失败（原样输出）", "err", err)
+		return template.HTML(raw) //nolint:gosec
+	}
+	var out strings.Builder
+	for _, node := range nodes {
+		p.rewriteImages(node)
+		err = html.Render(&out, node)
+		if err != nil {
+			slog.Warn("imgproc: 富文本渲染失败（原样输出）", "err", err)
+			return template.HTML(raw) //nolint:gosec
+		}
+	}
+	return template.HTML(out.String()) //nolint:gosec // 站点自己的富文本
+}
+
+// rewriteImages 就地把 img 的相对 src 换成过 imgproc 的地址（绝对地址/已处理的跳过）。
+func (p *Plugin) rewriteImages(node *html.Node) {
+	if node.Type == html.ElementNode && node.Data == "img" {
+		for index := range node.Attr {
+			attr := &node.Attr[index]
+			if attr.Key != "src" || attr.Val == "" {
+				continue
+			}
+			if strings.HasPrefix(attr.Val, "http://") || strings.HasPrefix(attr.Val, "https://") ||
+				strings.Contains(attr.Val, "x-oss-process=") {
+				continue
+			}
+			// 正文图给一个够宽的上限: lfit 只缩不放 ⇒ 小图不受影响
+			attr.Val = p.URL(attr.Val, contentImageWidth, 0, "lfit")
+		}
+		if !hasAttr(node, "loading") {
+			node.Attr = append(node.Attr, html.Attribute{Key: "loading", Val: "lazy"})
+		}
+	}
+	for child := node.FirstChild; child != nil; child = child.NextSibling {
+		p.rewriteImages(child)
+	}
+}
+
+func hasAttr(node *html.Node, key string) bool {
+	for _, attr := range node.Attr {
+		if attr.Key == key {
+			return true
+		}
+	}
+	return false
 }
 
 // URL 拼一个图片地址（模板用它 ⇒ 本地/OSS 两种部署只差配置）。
