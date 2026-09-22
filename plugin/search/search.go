@@ -29,6 +29,7 @@ package search
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/kran/dba"
@@ -111,7 +112,30 @@ func Mount(site *web.Site, options Options) (*Plugin, error) {
 	if err != nil {
 		return nil, err
 	}
+	// 索引是**空**的就建一次（老库第一次上 v3: 索引表刚建出来, 内容是 0 条）。
+	//
+	// 为什么让插件自己判断, 而不是让站点记"首次部署要重建": 站点很容易判错
+	//（踩过: 用"有新迁移"当触发条件 ⇒ 老库索引一直是空的, 表现是"搜索永远没结果",
+	// 而且不报错）。插件自己知道索引里有没有东西, 这是唯一不会判错的判据。
+	// 非空则不动（已有索引的站点行为不变; 要全量重建仍用 Rebuild / -reindex）。
+	err = plugin.rebuildIfEmpty()
+	if err != nil {
+		return nil, err
+	}
 	return plugin, nil
+}
+
+// rebuildIfEmpty 索引为空 ⇒ 全量建一次（幂等: 有内容就什么都不做）。
+func (p *Plugin) rebuildIfEmpty() error {
+	row, err := p.site.DB().Add(`SELECT COUNT(1) FROM search_fts`).FetchOne[int64]()
+	if err != nil {
+		return fmt.Errorf("search: 查索引条数: %w", err)
+	}
+	if row != nil && *row > 0 {
+		return nil
+	}
+	slog.Info("search: 索引为空, 全量重建一次")
+	return p.Rebuild()
 }
 
 // subscribe 把节点写事件接到索引维护上 —— 事件带 `tx *dba.SQL`, 就在写事务里,
