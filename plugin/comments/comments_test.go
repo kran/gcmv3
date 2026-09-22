@@ -500,3 +500,44 @@ func TestMountValidatesDeclaration(t *testing.T) {
 		})
 	}
 }
+
+// 分页是**真分页**: 读规则被 AND 进 SQL 的 WHERE ⇒ 一页就是"可见行的一页",
+// 不存在"取一窗再筛掉不可见的"（那是搜索插件的处境, 评论没有）。
+// 25 条 / 每页 10 ⇒ 三页不重不漏, total 精确。
+func TestPagingIsExact(t *testing.T) {
+	h := newHarness(t, Options{PageSize: 10})
+	article := h.create(t, "article", core.Fields{"name": "热闹的文章"})
+	for i := 1; i <= 25; i++ {
+		h.create(t, "comment", core.Fields{
+			"body": fmt.Sprintf("第 %d 条", i), "target": article,
+			"state": "approved", "author": h.member,
+		})
+	}
+	seen := map[int64]bool{}
+	for page := 1; page <= 3; page++ {
+		_, payload := h.list(t, map[string]string{
+			"type": "article", "target": fmt.Sprint(article),
+			"page": fmt.Sprint(page), "size": "10",
+		}, "")
+		if total, _ := payload["total"].(float64); total != 25 {
+			t.Fatalf("第 %d 页 total 该是精确的 25, 实际 %v", page, payload["total"])
+		}
+		ids := itemIDs(t, payload)
+		want := 10
+		if page == 3 {
+			want = 5
+		}
+		if len(ids) != want {
+			t.Fatalf("第 %d 页该 %d 条, 实际 %d", page, want, len(ids))
+		}
+		for _, id := range ids {
+			if seen[id] {
+				t.Fatalf("第 %d 页出现重复的 #%d", page, id)
+			}
+			seen[id] = true
+		}
+	}
+	if len(seen) != 25 {
+		t.Fatalf("三页合起来该覆盖 25 条, 实际 %d", len(seen))
+	}
+}
