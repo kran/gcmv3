@@ -114,6 +114,29 @@ function checkAssets() {
     return failed
 }
 
+// ── ⓪c 正文里不许出现 base64 图 ──────────────────────────────────────
+// Quill 默认的 uploader 就是 `FileReader → readAsDataURL` ⇒ 截图粘一下就变成
+// `data:image/png;base64,…` 进了正文: 一张图几十上百 KB, 前台每打开一次就多传一遍,
+// 换域名/迁移也都改不动它。后台任何地方出现它都是这个后果。
+function checkNoBase64Images() {
+    const problems = []
+    for (const dir of ['pages', 'widgets', 'js']) {
+        for (const f of fs.readdirSync(path.join(ADMIN_DIR, dir))) {
+            if (!/\.(vue|js)$/.test(f)) continue
+            const src = read(path.join(ADMIN_DIR, dir, f))
+            // 只认**调用形态**（.readAsDataURL(...)）—— 不去剥注释: 拿正则剥一个含
+            // HTML/JS/CSS 三种注释的 .vue 会误删大段正文（写过一版把 13KB 剥成 0.5KB,
+            // 闸门就成了摆设）。注释里写这个词说明「别这么干」, 不叫违规。
+            if (/\.readAsDataURL\s*\(/.test(src)) {
+                problems.push(dir + '/' + f + ': readAsDataURL —— 图会以 base64 进正文（走 $api.upload）')
+            }
+        }
+    }
+    for (const p of problems) console.log('  FAIL ' + p)
+    if (!problems.length) console.log('  ok   后台没有把图编成 base64 的代码（都走上传）')
+    return problems.length
+}
+
 // ── ⓪b 破坏性操作：措辞与行为必须对得上 ──────────────────────────────
 // NodeOps 的"删除"调的是 deleteNode（永久删除；被引用则拒绝），而归档节点连后台列表
 // 都查不到（所有读路径都写死 archived_at IS NULL）—— 措辞含糊 = 运营当软删点下去。
@@ -1441,7 +1464,171 @@ async function checkRender() {
         }
     }
 
+    failed += await checkRichEditorPaste(loadRuntime, makeRenderer)
 
+    return failed
+}
+
+// ── ⑰ 富文本: 粘贴/拖拽的图必须走上传（不能把 base64 写进正文）──────────
+//
+// Quill 自带的 uploader 是 `FileReader → readAsDataURL` ⇒ 截图粘一下就变成
+// `data:image/png;base64,…` 进了正文: 一张图几十上百 KB, 前台每次打开都多传一遍,
+// 换域名/迁移也都改不动它。这里用桩件把两个入口都跑一遍（无浏览器）:
+//
+//	① 剪贴板里的**文件**（截图/复制文件）→ modules.uploader.handler
+//	② 剪贴板里只有 HTML 的 `data:` 图 → capture 阶段的 paste
+//
+// 判据: 走的是 $api.upload, 插进编辑器的是 /uploads/… 而不是 data:。
+async function checkRichEditorPaste(loadRuntime, makeRenderer) {
+    const { Vue, sandbox, loadComponent } = loadRuntime()
+    const { renderer, node } = makeRenderer(Vue)
+    let failed = 0
+    const fail = (msg) => { failed++; console.log('  FAIL ' + msg) }
+
+    const uploaded = []       // 交给 $api.upload 的文件
+    let inserted = ''         // 插进编辑器的内容（insertEmbed / updateContents 的产物）
+    const pasteHandlers = []  // 组件在 root 上注册的 paste 处理器
+    const renderErrors = []
+
+    // 桩 Quill: 只保留组件用到的那几样
+    class FakeDelta {
+        constructor() { this.ops = [] }
+        retain(n) { this.ops.push({ retain: n }); return this }
+        concat(d) { this.ops.push(d); return this }
+        length() { return 1 }
+    }
+    class FakeQuill {
+        constructor(el, options) {
+            this.options = options
+            this.root = {
+                innerHTML: '<p><br></p>',
+                addEventListener: (type, fn) => { if (type === 'paste') pasteHandlers.push(fn) },
+                // 组件把 paste 听在**父节点**上（capture）—— 那里一定先于目标节点触发
+                parentNode: {
+                    addEventListener: (type, fn) => { if (type === 'paste') pasteHandlers.push(fn) },
+                },
+            }
+            this.clipboard = {
+                convert: ({ html }) => ({ html, length: () => 1 }),
+                addMatcher: () => {},
+            }
+        }
+        static register() {}
+        static import(name) {
+            if (name === 'delta') return FakeDelta
+            return class {}
+        }
+        on() {}
+        getSelection() { return { index: 0, length: 0 } }
+        getLength() { return 0 }
+        setContents() {}
+        setSelection() {}
+        insertEmbed(index, type, value) { inserted += ' embed:' + value }
+        updateContents(delta) { inserted += ' update:' + JSON.stringify(delta.ops) }
+    }
+    sandbox.Quill = FakeQuill
+    sandbox.QuillResize = null
+    sandbox.ElMessage = { success: () => {}, error: (msg) => { renderErrors.push(msg) } }
+    sandbox.File = File
+    sandbox.DOMParser = class {
+        // 只认 <img src="data:…">（用例自己喂的 HTML; 真解析在浏览器里做）。
+        // body.innerHTML 得**反映属性改动**（真 DOM 就是这样）—— 组件的做法是把 data: 的
+        // src 原地换成上传后的路径, 再整段插进编辑器; 桩件写死成原文就测不出这个。
+        parseFromString(html) {
+            const source = String(html)
+            const found = []
+            for (const m of source.matchAll(/<img[^>]*src=["'](data:[^"']+)["'][^>]*>/gi)) {
+                const img = { original: m[1], src: m[1] }
+                img.getAttribute = () => img.src
+                img.setAttribute = (k, v) => { if (k === 'src') img.src = v }
+                found.push(img)
+            }
+            const body = {}
+            Object.defineProperty(body, 'innerHTML', {
+                get() {
+                    let out = source
+                    found.forEach(img => { out = out.split(img.original).join(img.src) })
+                    return out
+                },
+            })
+            return {
+                body,
+                querySelectorAll: (sel) => (sel.includes('data:') ? found : []),
+            }
+        }
+    }
+    sandbox.$api = {
+        upload: async (file) => { uploaded.push(file); return { path: '/uploads/pasted.png' } },
+    }
+    // data: URL 的读取走 fetch（真浏览器里就是 fetch(dataURL)）—— 沙盒里的 fetch 是
+    // "不联网" 桩, 这里只给它 data: 开个口
+    const blockedFetch = sandbox.fetch
+    sandbox.fetch = (url) => {
+        if (String(url).indexOf('data:') === 0) {
+            return Promise.resolve({ blob: async () => new Blob([new Uint8Array([1, 2, 3])]) })
+        }
+        return blockedFetch(url)
+    }
+
+    const RichEditor = await loadComponent('/pages/RichEditor.vue')
+    const host = node('#root')
+    renderErrors.length = 0
+    const app = renderer.createApp(RichEditor.default || RichEditor, { modelValue: '' })
+    app.config.errorHandler = (err) => { renderErrors.push(err && err.message ? err.message : String(err)) }
+    const instance = app.mount(host)
+    await new Promise(r => setTimeout(r, 10))
+    if (renderErrors.length) {
+        fail('RichEditor 挂载报错: ' + renderErrors.join(' / '))
+        return failed
+    }
+
+    // ① 剪贴板里的图片文件（截图）: Quill 会把文件交给 modules.uploader.handler
+    const uploader = instance.quill && instance.quill.options && instance.quill.options.modules.uploader
+    if (!uploader || typeof uploader.handler !== 'function') {
+        fail('modules.uploader.handler 没配（拖拽/粘贴的文件会落回 Quill 的 base64 实现）')
+    } else {
+        inserted = ''
+        uploader.handler({ index: 0, length: 0 },
+            [new File([new Uint8Array([1, 2, 3])], 'image.png', { type: 'image/png' })])
+        await new Promise(r => setTimeout(r, 10))
+        if (uploaded.length !== 1) {
+            fail('拖拽/粘贴的图片文件没走 $api.upload（上传次数 ' + uploaded.length + '）')
+        } else if (!inserted.includes('/uploads/pasted.png')) {
+            fail('上传后该插入返回的路径, 实际插入: ' + inserted)
+        } else if (inserted.includes('data:')) {
+            fail('插入的内容里还有 data:（base64 又进正文了）: ' + inserted)
+        } else {
+            console.log('  ok   拖拽/粘贴的图片文件: 走上传, 正文里是 /uploads/pasted.png')
+        }
+    }
+
+    // ② 剪贴板里只有 HTML 的 data: 图（macOS 截图 / Office 复制）: Quill 那条路直接写 base64
+    if (!pasteHandlers.length) {
+        fail('没拦 paste（剪贴板里只有 HTML 的 data: 图会直接把 base64 写进正文）')
+    } else {
+        inserted = ''
+        let prevented = false
+        pasteHandlers[0]({
+            clipboardData: {
+                getData: (type) => (type === 'text/html' ? '<p>图</p><img src="data:image/png;base64,AAAA">' : ''),
+                files: [],
+            },
+            preventDefault: () => { prevented = true },
+            stopPropagation: () => {},
+        })
+        await new Promise(r => setTimeout(r, 10))
+        if (!prevented) {
+            fail('paste 没 preventDefault（Quill 还会再插一遍 base64）')
+        } else if (uploaded.length !== 2) {
+            fail('剪贴板 HTML 里的 data: 图没走上传（上传次数 ' + uploaded.length + '）')
+        } else if (inserted.includes('data:')) {
+            fail('插入的内容里还有 data:（base64 又进正文了）: ' + inserted)
+        } else if (!inserted.includes('/uploads/pasted.png')) {
+            fail('HTML 里的图该原地换成上传后的路径, 实际: ' + inserted)
+        } else {
+            console.log('  ok   剪贴板里的 data: 图: 上传后换成 /uploads/pasted.png')
+        }
+    }
     return failed
 }
 
@@ -1456,7 +1643,7 @@ async function main() {
     console.log(mode === 'sfc' ? '编译校验 (' + pageList().length + ' 个页面)' : '渲染回归')
     // 每项闸门返回失败条数；顺序 = 输出顺序。加总后决定退出码 —— 漏掉哪一项，
     // 那个闸门就只是"打印了一行 FAIL"却不让命令失败（等于没写）。
-    const parts = [checkAssets(), checkDestructiveWording(), checkDrawerClose(),
+    const parts = [checkAssets(), checkNoBase64Images(), checkDestructiveWording(), checkDrawerClose(),
         checkTimestampWidget(), checkWidgetStyles(),
         checkWidgetInterface(), checkEditorRefLabels(), checkNoNestedTemplate()]
     const failed = parts.reduce((a, b) => a + b, 0) +

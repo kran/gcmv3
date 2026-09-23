@@ -20,6 +20,13 @@ const TMP = path.join(os.tmpdir(), 'admin-selfcheck')
 
 // [说明, 模式, 文件, 原文, 改成]
 const CASES = [
+    // 正文里的图编成 base64 ⇒ 正文臃肿、前台每次打开都多传一遍、迁移也改不动
+    ['后台不许把图编成 base64 闸门', 'sfc', 'pages/RichEditor.vue',
+        'async dataURLFile(src) {', 'async dataURLFile(src) { new FileReader().readAsDataURL(new Blob([]))'],
+    // 粘贴/拖拽的图必须走上传（Quill 默认的 uploader 会编成 base64 写进正文）
+    ['富文本粘贴图片走上传闸门', 'render', 'pages/RichEditor.vue',
+        'handler: (range, files) => { this.insertPasted(null, [], files, range) }',
+        'handler: (range, files) => { console.log(range, files) }'],
     // 凭据面板去掉请求序号 ⇒ 换节点时旧响应会覆盖新列表
     ['凭据面板过期响应闸门', 'render', 'pages/AuthPanel.vue',
         'const requestID = ++this.requestID', 'const requestID = this.requestID'],
